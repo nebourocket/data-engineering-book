@@ -1,0 +1,70 @@
+site_name: データエンジニアの本
+site_url: https://nebourocket.github.io/data-engineering-book/
+site_author: 寝坊ロケット
+docs_dir: book
+
+hooks:
+  - hooks/tables.py
+
+theme:
+  name: material
+  language: ja
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/weather-night
+        name: ダークモードにする
+    - scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: ライトモードにする
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.footer
+    - search.suggest
+    - content.code.copy
+
+extra_css:
+  - assets/extra.css
+
+extra_javascript:
+  - assets/config.js
+  - path: assets/pro.js
+    type: module
+
+markdown_extensions:
+  - tables
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - はじめに: index.md
+  - 基礎編: basics/index.md
+  - 応用編:
+      - advanced/index.md
+      - 1. 分散処理の内側: advanced/01-distributed-processing.md
+      - 2. Spark の性能調整: advanced/02-spark-tuning.md
+      - 3. レイクハウスとテーブルフォーマット: advanced/03-lakehouse.md
+      - 4. ストリーミング設計: advanced/04-streaming-design.md
+      - 5. CDC とイベント駆動: advanced/05-cdc-event-driven.md
+      - 6. 大規模モデリング: advanced/06-large-scale-modeling.md
+      - 7. データ契約とスキーマ進化: advanced/07-data-contracts.md
+      - 8. 観測性・SLO・リネージ: advanced/08-observability.md
+      - 9. ガバナンス・セキュリティ・個人情報: advanced/09-governance-security.md
+      - 10. コスト最適化: advanced/10-cost-optimization.md
+      - 11. ML / AI のためのデータ基盤: advanced/11-ml-ai-platform.md
+      - 12. プラットフォーム設計と組織: advanced/12-platform-and-organization.md
+  - 特定商取引法に基づく表記: legal.md

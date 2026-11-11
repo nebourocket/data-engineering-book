@@ -1,0 +1,20 @@
+# Cloudflare Workers の設定 (無料プランで動きます)
+# 秘密の値 (STRIPE_SECRET_KEY・LICENSE_PRIVATE_JWK) はここに書かず、
+# `npx wrangler secret put <名前>` で登録してください。
+name = "de-book-license"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+[vars]
+ALLOWED_ORIGIN = "https://nebourocket.github.io"
+PRICE_JPY = "500"
+# Payment Link の ID (plink_...)。このリンク経由の支払いだけを認めます。空のあいだはキーを発行しません。
+PAYMENT_LINK_ID = ""
+# 公開鍵 (JSON 文字列)。scripts/gen-keys.mjs の出力を貼ります。空のあいだは章を配信しません。
+LICENSE_PUBLIC_JWK = ""
+
+# 応用編の本文を入れる KV。id は KV 作成後 (Task 7) に実際の値へ差し替えます。
+[[kv_namespaces]]
+binding = "CONTENT"
+id = "REPLACE_WITH_KV_NAMESPACE_ID_IN_TASK_7"

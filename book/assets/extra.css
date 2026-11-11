@@ -1,0 +1,13 @@
+/* Nord の色で上書きします */
+:root > * {
+  --md-primary-fg-color: #5E81AC;
+  --md-primary-fg-color--light: #88C0D0;
+  --md-primary-fg-color--dark: #4C566A;
+  --md-accent-fg-color: #88C0D0;
+}
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #5E81AC;
+  --md-accent-fg-color: #88C0D0;
+  --md-default-bg-color: #2E3440;
+  --md-default-fg-color: #ECEFF4;
+}

@@ -26,7 +26,7 @@
 | `nebourocket/data-engineering-book` (手元 `~/data-engineering-book`) | MkDocs Material のサイト、基礎編、応用編の目次と各章の紹介 (冒頭のみ)、Worker のコード、表のデータ、コード例、特商法ページ | 公開 |
 | `nebourocket/data-engineering-book-pro` (手元 `~/data-engineering-book-pro`) | 応用編の本文 Markdown と、そのコード例 | 非公開 |
 | Cloudflare Worker `de-book-license` | キーの発行・確認と、応用編本文の配信 | Cloudflare |
-| Workers KV `DE_BOOK_CONTENT` | 応用編の本文 HTML (章ごと) と失効リスト | Cloudflare |
+| Workers KV 名前空間 `CONTENT`（binding も `CONTENT`） | 応用編の本文 HTML (章ごと) と失効リスト | Cloudflare |
 
 Stripe アカウントは PFC と同じものを使う。商品・Payment Link・署名鍵・Worker はすべて PFC と別にする (PFC に影響を出さない)。
 
@@ -141,7 +141,7 @@ PFC の Worker (`~/pfc-calculator/worker/src/index.js`) と同じ方式を土台
 - **図**: 構成図や流れは Mermaid (コードから描かれる図)。数値を含むグラフは matplotlib のスクリプトを `examples/` に置き、出力した SVG を使う。
 - **数字**: 出典のあるものだけ。章末の参考文献に URL か書名を書く。値の揺れやすい料金・性能の数字は「確認日」を添える。
 - **コード**: 本文のコードはすべて `examples/<章>/` に同じものを置き、pytest で動かす。
-- **応用編の図**: Mermaid はビルド時に mermaid-cli で SVG にして HTML に埋め込む (差し込んだ HTML ではサイトの Mermaid が動かないため)。
+- **応用編の図**: Mermaid は `<pre class="mermaid">` のまま KV に入れ、本文を差し込んだあとに pro.js が Mermaid (CDN, mermaid@11.4.1) で描く。
 - **文体**: `writing-conventions` に従う。平易な日本語で、仕組みを先に説明し、具体例を1つ添える。
 
 ## 6. テストと検証
@@ -152,7 +152,7 @@ PFC の Worker (`~/pfc-calculator/worker/src/index.js`) と同じ方式を土台
 | 表の hook | pytest (CSV → 表、存在しない名前でビルドが失敗すること) |
 | コード例 | pytest (ds 内、DuckDB・PostgreSQL コンテナ) |
 | 有料本文の混入 | 非公開リポジトリの各章から一文を取り出し、公開リポジトリとビルド結果に無いことを確かめるスクリプト |
-| Worker | vitest: キー発行の条件5つ、偽造・改ざん・失効キーの拒否、章の配信、CORS |
+| Worker | Node だけで動くテスト (PFC と同じ形): キー発行の条件5つ、偽造・改ざん・失効キーの拒否、章の配信、CORS |
 | 内容 | 各章を事実チェック (出典との照合) と差分レビューにかける |
 | 本番前 | Stripe のテスト環境で、購入 → キー → 別ブラウザでキー入力 → 応用編を読む、を通しで行う |
 

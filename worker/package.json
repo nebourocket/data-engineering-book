@@ -1,0 +1,9 @@
+{
+  "name": "de-book-license",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/worker.test.mjs",
+    "deploy": "npx wrangler@3 deploy"
+  }
+}

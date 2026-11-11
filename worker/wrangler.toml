@@ -11,8 +11,9 @@ ALLOWED_ORIGIN = "https://nebourocket.github.io"
 PRICE_JPY = "500"
 # Payment Link の ID (plink_...)。このリンク経由の支払いだけを認めます。空のあいだはキーを発行しません。
 PAYMENT_LINK_ID = ""
-# 公開鍵 (JSON 文字列)。scripts/gen-keys.mjs の出力を貼ります。空のあいだは章を配信しません。
-LICENSE_PUBLIC_JWK = ""
+# 公開鍵 (JSON 文字列)。scripts/gen-keys.mjs の出力を、下のシングルクォート ' の中に貼ります
+# (JSON の " をそのまま使えるように TOML のリテラル文字列にしています)。空のあいだは章を配信しません。
+LICENSE_PUBLIC_JWK = ''
 
 # 応用編の本文を入れる KV。id は KV 作成後 (Task 7) に実際の値へ差し替えます。
 [[kv_namespaces]]

@@ -80,7 +80,14 @@ async function renderMermaid(root) {
   const mod = await import(MERMAID_URL);
   const mermaid = mod.default;
   mermaid.initialize({ startOnLoad: false });
-  await mermaid.run({ nodes: Array.from(nodes) });
+  const list = Array.from(nodes);
+  // KV の HTML は <pre class="mermaid"><code>…</code></pre> なので、mermaid が読めるよう素のテキストにします。
+  list.forEach((n) => { n.textContent = n.textContent; });
+  try {
+    await mermaid.run({ nodes: list });
+  } catch (e) {
+    console.warn("Mermaid の描画に失敗しました", e);
+  }
 }
 
 async function loadChapter(div, key) {

@@ -37,7 +37,7 @@ node worker/scripts/gen-keys.mjs
 ```
 
 - 「秘密鍵」の1行 → 次の手順で Cloudflare に登録する。**ファイルにもチャットにも残さない。**
-- 「公開鍵」の1行 → `worker/wrangler.toml` の `LICENSE_PUBLIC_JWK` に貼る（公開して問題ありません）。
+- 「公開鍵」の1行 → `worker/wrangler.toml` の `LICENSE_PUBLIC_JWK` のシングルクォート ' の中に貼る（公開して問題ありません）。
 
 ## 3. Cloudflare Workers と KV を用意する
 
@@ -59,7 +59,7 @@ npx wrangler@3 secret put LICENSE_PRIVATE_JWK   # 手順2の秘密鍵を貼る
 npx wrangler@3 deploy
 ```
 
-4. `wrangler.toml` の `[vars]` に `LICENSE_PUBLIC_JWK`（手順2の公開鍵）と `PAYMENT_LINK_ID`（`plink_...`）を入れて、もう一度 `~/data-engineering-book/worker` で `npx wrangler@3 deploy`。どちらかが空のあいだは、安全のためキーも章も出しません。
+4. `wrangler.toml` の `[vars]` に `LICENSE_PUBLIC_JWK`（手順2の公開鍵。シングルクォート ' の中に貼る）と `PAYMENT_LINK_ID`（`plink_...`）を入れて、もう一度 `~/data-engineering-book/worker` で `npx wrangler@3 deploy`。どちらかが空のあいだは、安全のためキーも章も出しません。
 5. 表示された URL（`https://de-book-license.<サブドメイン>.workers.dev`）を控える。
 
 ## 4. 本の設定を入れて公開する

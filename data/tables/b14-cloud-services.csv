@@ -1,0 +1,9 @@
+役割,AWS,Google Cloud,Microsoft Azure
+計算(仮想サーバー),EC2,Compute Engine,Virtual Machines
+コンテナを動かす,ECS・EKS,Cloud Run・GKE,Container Apps・AKS
+オブジェクトストレージ,S3,Cloud Storage,Blob Storage
+データウェアハウス,Redshift,BigQuery,Synapse Analytics・Fabric
+秘密(鍵・パスワード)の管理,Secrets Manager,Secret Manager,Key Vault
+ネットワーク,VPC,VPC,Virtual Network
+権限の管理,IAM,IAM,Entra ID と Azure RBAC
+ワークフロー(第12章),MWAA(マネージド Airflow),Cloud Composer,Data Factory

@@ -1,0 +1,40 @@
+version: 2
+
+sources:
+  - name: shop
+    schema: main
+    tables:
+      - name: customers
+        columns:
+          - name: email
+            data_tests:
+              # 欠けが 10 件を超えたら warn、40 件を超えたら error (件数で決める)
+              - not_null:
+                  config:
+                    severity: error
+                    warn_if: ">10"
+                    error_if: ">40"
+      - name: orders
+        columns:
+          - name: order_id
+            data_tests:
+              - unique
+              - not_null
+          - name: status
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: [placed, shipped, delivered, cancelled]
+                  config:
+                    severity: warn
+          - name: customer_id
+            data_tests:
+              - relationships:
+                  arguments:
+                    to: source('shop', 'customers')
+                    field: customer_id
+      - name: events
+        columns:
+          - name: event_id
+            data_tests:
+              - unique

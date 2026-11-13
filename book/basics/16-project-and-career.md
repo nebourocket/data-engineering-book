@@ -30,25 +30,37 @@ flowchart LR
 
 ### 使う部品について
 
-取り込み (第9章) と変換 (第10章) と品質チェック (第13章) は、それぞれの章で作った考え方を使います。ただし、この演習のコードは、章ごとのコードを `import` するのではなく、`examples/b16/` の中で完結するように書き直しました。章のコード例は、その章の説明に合わせた形で書かれていて、別の章から呼ぶ前提で作っていないためです。特に品質チェックは、第13章の仕組みを、この演習に要る分 (5 件の確認、error と warn の区別、結果の記録) だけに小さくした版です。第13章のものに置き換えるときは、`quality.py` の `run_checks` を呼んでいる 1 行を差し替えます。
+この演習は、新しく書くコードを少なくして、前の章のものを使い直します。
+
+- 取り込み: events は、第9章の `landing_files.py` (`land_events` で置き、`load_new_partitions` で読み込む) をそのまま呼びます。第9章のコードに無い customers・orders・order_items の置き込みだけを、同じ決まり (`_SUCCESS` を最後に置く、日付のパーティション) で `examples/b16/ingest.py` に書きました。
+- 変換: 第10章の dbt プロジェクト (`examples/b10/`) を、作業フォルダにコピーして `dbt build` します。第10章のテストと同じく、既知の問題を表すテスト (`tag:known_issue`) は除きます。そのため、この章の売上の定義は、第10章の `fct_daily_sales` (キャンセル以外の注文の金額を、日ごとに足したもの) と同じです。この章では新しい dbt のモデルは作りません。
+- 品質チェック: 第13章の考え方 (「悪い行の数 / 見た行の数」で表す確認、error と warn の区別、結果の記録) を、この演習に要る分だけ小さくした `examples/b16/quality.py` を使います。第13章のコード例は、執筆の時点でこの本のリポジトリの main に入っていなかったので、そのまま呼ばず、自前の小さな版にしています。
+
+第9章のコードは、boto3 の S3 クライアントを受け取って動きます。サービスが無い環境 (図のビルドなど) でも動かせるように、`examples/b16/store.py` に、手元のフォルダで S3 の呼び出しを受け止める小さな代用品 (`LocalS3`) を置きました。MinIO に置くときは、本物の boto3 のクライアントを渡します。パイプラインの側は、どちらが来たかを知りません。
 
 ### 動かす
 
-WSL や Linux のシェルで、リポジトリの直下から動かします。MinIO (第14章) に置く場合は、`docker compose up -d --wait` で起動してからです。`S3_ENDPOINT` を渡さなければ、手元のフォルダに置きます。
+WSL や Linux のシェルで、リポジトリの直下から動かします。Docker で動かす `de-book-dev` は、この本の開発用イメージです (第14章)。まず MinIO に置く版です。`docker compose up -d --wait` で MinIO を起動してから実行します。
 
 ```bash
-# リポジトリの直下で動かします。MinIO を使うなら docker compose up -d --wait で起動しておきます。
-# MinIO に置く場合 (S3_ENDPOINT を渡す)。--network host は、コンテナから localhost の MinIO に届かせるためです。
+# リポジトリの直下で動かします。先に docker compose up -d --wait で MinIO を起動しておきます。
+# minioadmin は、この本の compose.yaml の MinIO の初期のユーザー名とパスワードです (手元の学習用)。本番では環境変数や .env から渡し、コードに書きません。
+# --network host は、コンテナの中から localhost の MinIO に届かせるためです。結果は work/b16/ にできます。
 docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e S3_ENDPOINT=http://localhost:9000 -e S3_ACCESS_KEY=minioadmin -e S3_SECRET_KEY=minioadmin -v "$PWD":/w -w /w de-book-dev python examples/b16/pipeline.py --dt 2026-07-01 --workdir work/b16
+```
 
-# サービスなしで、手元のフォルダに置く場合 (S3_ENDPOINT を渡さない)
+`minioadmin` は、この本の `compose.yaml` が作る手元の MinIO の初期のユーザー名とパスワードで、学習用です。本番のキーは、コードに書かず、環境変数や `.env` (リポジトリに入れない) から渡します (第3章)。次は、サービスなしで手元のフォルダに置く版です。MinIO が無くても動きます。
+
+```bash
+# サービスなしで、手元のフォルダ (work/b16/landing/) に置いて動かす場合です。S3_ENDPOINT を渡さないので MinIO は使いません。
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/w -w /w de-book-dev python examples/b16/pipeline.py --dt 2026-07-01 --workdir work/b16
 ```
 
-実行すると、次のように表示されました (MinIO に置いた場合です。リポジトリの `work/b16/` に `warehouse.duckdb` と図の SVG ができます。確認が済んだら `work/` は消して構いません。図のパスは、実行した場所によって表示が変わります)。
+どちらも、結果は `work/b16/` にできます (`.gitignore` に入れてあります。確認が済んだら消して構いません)。
+実行すると、次のように表示されました (MinIO に置いた場合です。`work/b16/` に、DuckDB のファイル `warehouse.duckdb` と図の SVG ができます)。
 
 ```text
-raw に読み込み: {'orders': 3000, 'order_items': 7469, 'events': 4040}
+raw に読み込み: {'customers': 505, 'orders': 3000, 'order_items': 7469, 'events': 4040}
   OK    orders が空でない
   OK    日別売上の日付が NULL でも重複でもない
   OK    日別売上の合計が raw の明細と一致する
@@ -67,102 +79,78 @@ raw に読み込み: {'orders': 3000, 'order_items': 7469, 'events': 4040}
 
 ### 取り込みと raw
 
-`land` は、表を Parquet にして置き、**最後に** `_SUCCESS` を置きます。第9章で見たとおり、全部置き終えた印です。
+`land` は、表を Parquet (列ごとにまとめて保存するファイル形式。第2章) にして置き、**最後に** `_SUCCESS` を置きます。第9章で見たとおり、全部置き終えた印です。再実行のとき、最初に前回の印を消します。消さずに置き直すと、置き直しの途中で止まったとき、前回の印が残ったまま中身が半分だけ新しくなり、読む側が「置き終わっている」と思って読んでしまうからです。
 
 ```python title="ingest.py"
-def land(store, dt):
-    """TABLES を Parquet にして置き、最後に _SUCCESS を置きます。"""
+def land(s3, bucket, dt):
+    """TABLES を Parquet にして置き、events は第9章の land_events で置きます。印は最後です。"""
     data = generate()
+    s3.delete_object(Bucket=bucket, Key=success_key(dt))  # 置き直す前に、前回の印を消す
     for name in TABLES:
         buf = io.BytesIO()
         pq.write_table(pa.Table.from_pylist(data[name]), buf)
-        store.put(f"raw/dt={dt}/{name}.parquet", buf.getvalue())
-    store.put(f"raw/dt={dt}/_SUCCESS", b"")
+        s3.put_object(Bucket=bucket, Key=f"raw/dt={dt}/{name}.parquet", Body=buf.getvalue())
+    landing_files.land_events(s3, bucket, data["events"])  # 日ごとの _SUCCESS も、置き終えたあとに置かれる
+    s3.put_object(Bucket=bucket, Key=success_key(dt), Body=b"")
 ```
 
-読む側の `load_raw` は、印が無ければ読みません。
+events は、第9章の `land_events` が、受信日ごとに `landing/events/dt=<日付>/` へ置き、日ごとに印も置きます。読む側の `load_raw` は、`raw/dt=<取り込み日>/_SUCCESS` が無ければ読みません。
 
 ```python title="ingest.py"
-def load_raw(con, store, dt):
-    """_SUCCESS のある dt だけを、DuckDB の raw 表 (main スキーマ) に読み込みます。件数の辞書を返します。"""
-    if not store.exists(f"raw/dt={dt}/_SUCCESS"):
+def load_raw(con, s3, bucket, dt):
+    """印のある dt だけを、DuckDB の raw 表 (main スキーマ) に読み込みます。件数の辞書を返します。"""
+    keys = [o["Key"] for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=success_key(dt))
+            for o in page.get("Contents", [])]
+    if success_key(dt) not in keys:
         raise RuntimeError(f"dt={dt} は _SUCCESS が無いので読みません (書きかけかもしれません)")
     counts = {}
     for name in TABLES:
-        table = pq.read_table(io.BytesIO(store.get(f"raw/dt={dt}/{name}.parquet")))
-        con.register("_t", table)
+        body = s3.get_object(Bucket=bucket, Key=f"raw/dt={dt}/{name}.parquet")["Body"].read()
+        con.register("_t", pq.read_table(io.BytesIO(body)))
         con.execute(f"CREATE OR REPLACE TABLE main.{name} AS SELECT * FROM _t")
         con.unregister("_t")
-        counts[name] = table.num_rows
+        counts[name] = con.execute(f"SELECT count(*) FROM main.{name}").fetchall()[0][0]
+    # events: 第9章の load_partition で events_raw に入れ、dbt が読む main.events (元の 5 列) を作る
+    landing_files.setup_raw(con)
+    landing_files.load_new_partitions(con, s3, bucket)
+    con.execute("""CREATE OR REPLACE TABLE main.events AS
+                   SELECT event_id, customer_id, event_type, event_time, received_at FROM events_raw""")
+    counts["events"] = con.execute("SELECT count(*) FROM main.events").fetchall()[0][0]
     return counts
 ```
 
-三つの決まりがコードに入っています。置く場所は `raw/dt=<取り込み日>/` で、同じ日付なら同じキーを上書きするので、何度実行しても結果は同じです (冪等)。印は最後に置きます。そして、raw 表は元の値のまま入れます。表記ゆれも重複も直しません。直す場所を変換に限ると、「元はどうだったか」がいつでも raw に残ります。
+決まりが4つコードに入っています。置く場所は `raw/dt=<取り込み日>/` で、同じ日付なら同じキーを上書きするので、何度実行しても結果は同じです (冪等)。印は、前回のものを消してから、最後に置きます。読む側は印が無ければ読みません。そして、raw 表は元の値のまま入れます。表記ゆれも重複も直しません。直す場所を変換に限ると、「元はどうだったか」がいつでも raw に残ります。events の 4,040 行に重複の 40 行が含まれているのは、そのためです。
 
 `dt` は本来「取り込んだ日」です。この演習の元データは固定のデータセットなので、`--dt` は取り込みの区分けの名前として渡しています。
 
 ### 変換
 
-変換は dbt です (第10章)。staging で、状態の表記ゆれを小文字にそろえ、日時を型にします。
+変換は dbt です。第10章のプロジェクトをそのまま使うので、この章でモデルのコードは増えません。第10章で作った staging が、状態の表記ゆれ (`shipped` と `SHIPPED`) を小文字にそろえ、events の重複を取り除きます。mart の `fct_daily_sales` が、キャンセル以外の注文の件数と売上を日ごとに数えます。粒度は「1 行 = 1 日」です (第8章)。dbt のテストも第10章のものがそのまま動きます。実行結果は、25 件中 `PASS=24 WARN=1 ERROR=0` でした。WARN の 1 件は、events の `event_id` の重複 (40 件) を知らせる、第10章で severity を warn にしたテストです。
 
-```sql
--- 状態の表記ゆれ (shipped / SHIPPED) を小文字にそろえ、日時を型にする
-select
-    order_id,
-    customer_id,
-    cast(ordered_at as timestamp) as ordered_at,
-    lower(status) as status
-from {{ source('raw', 'orders') }}
-```
-
-mart の `fct_daily_sales` は、キャンセル以外の注文の件数と売上を、日ごとに数えます。
-
-```sql
--- 1 行 = 1 日。キャンセルを除いた注文の件数と売上
-select
-    cast(o.ordered_at as date) as order_date,
-    count(distinct o.order_id) as orders,
-    sum(i.line_amount) as sales
-from {{ ref('stg_orders') }} as o
-inner join {{ ref('stg_order_items') }} as i
-    on o.order_id = i.order_id
-where o.status <> 'cancelled'
-group by 1
-```
-
-粒度は「1 行 = 1 日」です (第8章)。dbt のテストとして、`order_id` の一意と NULL なし、状態が 4 種類のどれかであること、日別売上の `order_date` の一意と NULL なしを書いてあります。
-
-```yaml
-version: 2
-
-models:
-  - name: fct_daily_sales
-    columns:
-      - name: order_date
-        data_tests: [unique, not_null]
-      - name: sales
-        data_tests: [not_null]
-```
-
-dbt を呼ぶ部分は、プロジェクトを作業フォルダにコピーしてから実行します。dbt は実行すると `target/` と `logs/` を作るので、リポジトリの中を汚さないためです。
+dbt を呼ぶ部分は、プロジェクトを作業フォルダにコピーしてから実行します。dbt は実行すると `target/` と `logs/` を作るので、リポジトリの中を汚さないためです。`subprocess.run` は、プログラムの中から別のコマンド (ここでは `dbt`) を動かす呼び出しで、終了コードが 0 以外なら失敗です。失敗したときは、dbt の出力 (標準出力と標準エラー) の末尾を例外に付けて、原因を追えるようにしています。
 
 ```python title="pipeline.py"
 def dbt_build(workdir, db_path):
-    """dbt のプロジェクトを workdir にコピーして build します (target と logs をリポジトリに残さないため)。"""
+    """第10章の dbt プロジェクトを workdir にコピーして build します (target と logs をリポジトリに残さないため)。
+    既知の問題 (tag:known_issue のテスト) は、第10章のテストと同じく除きます。"""
     project = Path(workdir) / "dbt"
     shutil.rmtree(project, ignore_errors=True)
-    shutil.copytree(HERE / "dbt", project)
+    shutil.copytree(DBT_PROJECT, project, ignore=shutil.ignore_patterns(
+        "test_*.py", "__pycache__", "exercises", "ci-example.yml", "usage*.sh", "target", "logs", "*.duckdb"))
     env = {**os.environ, "DBT_DUCKDB_PATH": str(db_path), "DBT_SEND_ANONYMOUS_USAGE_STATS": "False"}
-    result = subprocess.run(
-        ["dbt", "build", "--project-dir", str(project), "--profiles-dir", str(project), "--no-use-colors"],
-        capture_output=True, text=True, env=env)
+    try:
+        result = subprocess.run(
+            ["dbt", "build", "--exclude", "tag:known_issue", "--project-dir", str(project),
+             "--profiles-dir", str(project), "--no-use-colors"], capture_output=True, text=True, env=env)
+    except FileNotFoundError:
+        raise RuntimeError("dbt コマンドが見つかりません (pip install dbt-duckdb か、開発用イメージで動かしてください)")
     if result.returncode != 0:
-        raise RuntimeError("dbt build が失敗しました:\n" + result.stdout[-2000:])
+        raise RuntimeError("dbt build が失敗しました:\n" + result.stdout[-2000:] + result.stderr[-1000:])
 ```
 
 ### 品質チェック
 
-確認は、「悪い行の数」と「見た行の数」を返す SQL 1 本で表します。一覧は `quality.py` の `CHECKS` にあります。その中の 1 つ、売上の突合 (とつごう: 2 つの出どころの数字が合うかの確認) は、変換の結果を、raw から別の書き方で数え直した値と比べます。
+確認は、「悪い行の数」と「見た行の数」を返す SQL 1 本で表します (第13章)。一覧は `quality.py` の `CHECKS` にあります。その中の 1 つ、売上の突合 (とつごう: 2 つの出どころの数字が合うかの確認) は、変換の結果を、raw から別の書き方で数え直した値と比べます。
 
 実行して結果を残すのは `run_checks` です。
 
@@ -192,15 +180,15 @@ def run_checks(con, run_dt, checks=CHECKS):
 全体をつなぐのは、`pipeline.py` の `run` です。
 
 ```python title="pipeline.py"
-def run(store, dt, workdir):
+def run(s3, bucket, dt, workdir):
     """全工程を実行して、図のパスを返します。"""
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     db_path = workdir / "warehouse.duckdb"
-    ingest.land(store, dt)
+    ingest.land(s3, bucket, dt)
     con = duckdb.connect(str(db_path))
     try:
-        print("raw に読み込み:", ingest.load_raw(con, store, dt))
+        print("raw に読み込み:", ingest.load_raw(con, s3, bucket, dt))
     finally:
         con.close()  # dbt が同じファイルを開くので、いったん閉じる (DuckDB は同時に 1 つのプロセスしか書けない)
     dbt_build(workdir, db_path)
@@ -219,16 +207,18 @@ def run(store, dt, workdir):
     return figure
 ```
 
-`run` は、途中で例外が出れば、そこで止まります。その次の工程には進みません。`finally` の中で結果を表示しているので、`QualityError` で止まったときにも、どの確認が不合格だったかが表示に残ります。DuckDB は 1 つのファイルを同時に 1 つのプロセスしか書き込めないので、dbt を呼ぶ前に、こちらの接続をいったん閉じています。
+プログラムは、上から順に動きます。途中で例外 (エラーを知らせる仕組み) が出ると、その行でプログラムは止まり、後ろの行は実行されません。これが「失敗したら後ろの工程が動かない」の正体です。`try ... finally` は、例外が出ても出なくても、`finally` の中を必ず実行する書き方です。`finally` の中で結果を表示しているので、`QualityError` で止まったときにも、どの確認が不合格だったかが表示に残ります。DuckDB は 1 つのファイルを同時に 1 つのプロセスしか書き込めないので、dbt を呼ぶ前に、こちらの接続をいったん閉じています。
 
 ## 止まり方と冪等さを確かめる
 
 動かして「できた」で終わらせず、テストで確かめます。`examples/b16/test_b16_project.py` に、次の内容が入っています。
 
-- 手元のフォルダ版と MinIO 版の両方で、最後まで通る。落ちた確認は、warn の 1 件だけ。
+- 手元のフォルダ版と MinIO 版の両方で、最後まで通る。落ちた確認は、warn の 1 件だけ。売上の合計は、第10章の `fct_orders` から数えた値と一致する。
 - 同じ日付で 2 回実行しても、売上の合計も `dq_results` も変わらない。
-- `_SUCCESS` を消すと、`load_raw` が `RuntimeError` で拒否する。
+- `land` が前回の `_SUCCESS` を最初に消し、新しい `_SUCCESS` を最後に 1 回だけ置く (`put` と `delete` の呼び出し順を記録して確かめる)。
+- 置き直しの途中で落ちると、古い印が残らず、`load_raw` が `RuntimeError` で拒否する。
 - 売上の合計をわざと合わなくすると、`QualityError` で止まる。止まる前に、5 件すべての結果が記録されている。
+- 日付の NULL は 1 回だけ数える (確認の SQL の数え方)。
 
 パイプラインを書いたあと、「壊したときにどうなるか」を 1 回は確かめてください。確かめていない止まり方は、本番で初めて動くことになります。
 
@@ -255,18 +245,20 @@ def run(store, dt, workdir):
 店長が毎朝、前日までの日別売上と、その数字を信じてよいかを 1 枚で見られるようにする。
 
 ## 決めたこと (数字の定義)
-- 売上 = キャンセル以外の注文の「数量 × 単価」の合計。注文日は ordered_at の日付 (UTC)。
+- 売上 = キャンセル以外の注文の「数量 × 単価」の合計 (第10章の fct_daily_sales と同じ定義)。
+- 注文日 = ordered_at の日付。元データの時刻はタイムゾーンを持たないので、変換せずそのまま日付にしている。
+  第2章の「タイムゾーン付きの UTC で保存する」決まりは、元データにタイムゾーンが無いため適用できていない (限界に記載)。
 - 状態の表記ゆれ (shipped / SHIPPED) は、変換 (staging) で小文字にそろえる。raw は直さない。
 - 更新は 1 日 1 回。結果が出るまでの許容は翌朝まで (バッチで足りる。ストリームにはしない)。
 
 ## 全体の流れ
-取り込み (Parquet を landing に置く) → raw (DuckDB) → dbt (staging → fct_daily_sales)
+取り込み (landing に置く。events は第9章の仕組み) → raw (DuckDB) → dbt (第10章のプロジェクト)
 → 品質チェック (5 件) → 図 (SVG)。どこかで失敗したら後ろの工程は動かない。
 
 ## 動かし方
     docker compose up -d --wait
-    sh examples/b16/run.sh
-同じ日付で何度実行しても同じ結果になる (landing のキーは上書き、raw と dbt は作り直し、dq_results は日付ごとに入れ替え)。
+    sh examples/b16/run-minio.sh      (サービスなしなら run-local.sh)
+結果は work/b16/ にできる。同じ日付で何度実行しても同じ結果になる (landing のキーは上書き、raw と dbt は作り直し、dq_results は日付ごとに入れ替え)。
 
 ## 品質チェックと、止める基準
 - error (止める): orders が空 / 日別売上の日付の NULL・重複 / 日別売上の合計が raw の明細と不一致。
@@ -274,6 +266,7 @@ def run(store, dt, workdir):
 - 基準の根拠: 売上の数字が壊れるものは error、集計に直接使わない events の欠陥は warn。
 
 ## 既知の限界
+- 注文日のタイムゾーンが不明 (上記)。時刻の意味を元データの持ち主に確認するまで、日付の境目の近くの注文は日がずれるかもしれない。
 - 取り込みは毎回全件の置き直し (増分ではない)。件数が増えたら watermark 方式に変える。
 - 実行はコマンド 1 本。スケジューラ (Airflow など) には載せていない。
 - 通知は標準出力だけ。
@@ -282,7 +275,7 @@ def run(store, dt, workdir):
 1. 増分取り込みにする。 2. Airflow から呼ぶ。 3. warn の件数が増えたら通知する。
 ```
 
-特に「既知の限界」は、書くのに勇気がいる項目です。しかし、ここを書いていると、読む人は「この人は何ができて何ができないかを分かっている」と受け取ります。書かないと、読む人は自分で限界を探し当てることになり、そのときの印象はずっと悪くなります。
+特に「既知の限界」は、書くのに勇気がいる項目です。しかし、ここを書いていると、読む人は「この人は何ができて何ができないかを分かっている」と受け取ります。書かないと、読む人は自分で限界を探し当てることになり、書いた人への信頼を損ねることがあります。
 
 なお、判断の記録を 1 件ずつ短い文書にして残す書き方があります。Michael Nygard が提案した Architecture Decision Record (ADR) で、「状況・決めたこと・結果」を 1 枚に書きます (参考文献 2)。設計メモの「決めたこと」が増えてきたら、ADR に分けると読みやすくなります。
 
@@ -309,7 +302,7 @@ def run(store, dt, workdir):
 
 ## 現場での最初の 90 日
 
-入社(または異動)後の最初の 90 日は、新しいものを作るより、**読んで、聞いて、小さく直す**時間にします。経験豊富な人ほど、早く新しいものを作りたくなりますが、そこにある仕組みを知らないまま作ると、既にある別の仕組みと食い違います。
+入社(または異動)後の最初の 90 日は、新しいものを作るより、**読んで、聞いて、小さく直す**時間にします。新しいものを早く作りたくなりますが、そこにある仕組みを知らないまま作ると、既にある別の仕組みと食い違います。
 
 {{ table("b16-90days") }}
 
@@ -324,7 +317,13 @@ def run(store, dt, workdir):
 
 **小さく直す。** 最初に直すのは、影響が小さく、確認しやすいものにします。たとえば、テストの無い重要な列にテストを足す。失敗しても誰にも通知されないジョブに通知を足す。実行手順の書かれていない作業を、手順書にする。小さく直して、レビューを受け、出す。この往復を、チームの流儀を知るために使います。
 
-やってはいけないのは、読む前に「作り直したい」と言い出すことです。作り直したくなるのは、たいてい、まだ理由を知らない部分です。理由を聞いてから、それでも直したいなら、根拠を数字で示して提案します。
+直すときの習慣が 3 つあります。1 つ目は、変更を小さな単位に分けて、コミットメッセージに「何を、なぜ」を書くことです (第3章)。`fix(b16): …` のように、種類を頭に付ける書き方もあります。2 つ目は、プルリクエスト (PR: 変更をレビューしてもらう依頼) の説明に、確認した方法 (どのテストを動かしたか) を書くことです。3 つ目は、大きな変更を 1 つの PR に詰めず、レビューする人が 1 回で読める量にすることです。
+
+**手順書 (runbook) と引き継ぎ。** 手順書は、「この警告が出たら、まず何を見て、どう直すか」を書いた文書です。夜中に呼ばれた当番が、背景を知らなくても動けるようにします。書く内容は、症状、確認するコマンド、直す手順、直らないときの連絡先です。当番の引き継ぎでは、直近の障害、まだ直っていない既知の問題、これから実行されるジョブ (大きなデータ移行など) を、短い文で伝えます。
+
+**失敗のログの読み方。** パイプラインが失敗したら、まずログの最後の数十行ではなく、最初のエラーの行を探します。後ろのエラーは、最初のエラーの結果として出ることが多いためです。dbt なら、`dbt build` の出力で `ERROR` が付いたモデルかテストの名前を見て、`target/run/` にある実際に実行された SQL を、DuckDB や psql で動かして確かめます。Airflow なら (第12章)、画面でその実行 (DAG run) の失敗したタスクを選び、そのタスクのログを開きます。失敗したタスクの、さらに上流のタスクが成功しているかも見ます。再実行する前に、同じ日付で何度実行しても結果が同じか (冪等か) を確かめてください。
+
+やってはいけないのは、読む前に「作り直したい」と言い出すことです。作り直したくなる部分には、まだ理由を知らないだけのものが含まれています。理由を聞いてから、それでも直したいなら、根拠を数字で示して提案します。
 
 ## 学び続ける
 
@@ -332,9 +331,9 @@ def run(store, dt, workdir):
 
 **公式ドキュメントを一次情報にする。** ブログの記事は、書かれた時点の版の話です。仕様は、公式ドキュメントで確かめます。PostgreSQL・DuckDB・dbt・Airflow・Kafka・Docker は、どれもドキュメントが充実しています (参考文献 5 から 10)。使っている版のページを開いているかを確かめる癖をつけてください。
 
-**リリースノートを読む。** 使っている道具の新しい版が出たら、リリースノートの「破壊的な変更」と「非推奨」の項目だけでも読みます。ある日突然ジョブが落ちる原因の多くは、ここに書いてあります。PostgreSQL・Airflow・dbt・DuckDB は、どれも公開しています (参考文献 5 から 8)。
+**リリースノートを読む。** 使っている道具の新しい版が出たら、リリースノートの「破壊的な変更」と「非推奨」の項目だけでも読みます。版を上げたときに挙動が変わる点は、ここに書かれています。PostgreSQL・Airflow・dbt・DuckDB は、どれも公開しています (参考文献 5 から 8)。
 
-**手元の本。** この本の参考文献に挙げた、次の本がよい次の一冊になります。
+**手元の本。** 筆者の手元にある本のうち、この本の内容に近い実在の本を挙げます (版は表のとおりです)。
 
 {{ table("b16-books") }}
 
@@ -348,7 +347,7 @@ def run(store, dt, workdir):
 
 {{ table("b16-interview") }}
 
-**SQL。** 手元で書く問題が出ることがあります。最初に粒度(1 行が何か)を確かめてから書き、書いたあとで件数で検算する、という順にすると、間違いに気づきやすくなります。`examples/b16/interview.sql` に、次の形の問題を置きました。
+**SQL。** 手元で書く問題が出ることがあります。最初に粒度(1 行が何か)を確かめてから書き、書いたあとで件数で検算する、という順にすると、間違いに気づきやすくなります。DuckDB で動かしている SQL なので、PostgreSQL などとの違いも注記します。`examples/b16/interview.sql` に、次の形の問題を置きました。
 
 ```sql
 -- 面接でよく出る形の SQL。パイプラインを一度動かしたあとの warehouse.duckdb (DuckDB) で動かします。
@@ -374,13 +373,13 @@ SELECT (SELECT count(*) FROM analytics.stg_orders) AS orders,
        (SELECT count(DISTINCT order_id) FROM main.order_items) AS orders_with_items;
 ```
 
-1 つ目は `row_number` で、顧客ごとの先頭の行を取る定番の形です。DuckDB には `QUALIFY` という、窓関数の結果で絞る構文があり、サブクエリなしで書けます。ただし PostgreSQL や標準 SQL にはない書き方なので、面接で使うなら、どこで動くかを一言添えてください。2 つ目は、「直近 7 日」を `ROWS BETWEEN 6 PRECEDING` で書いたものです。これは直近の **7 行**であって、注文の無い日の行が無ければ、7 日ではありません。7 日にしたいなら、日付の表と結合して欠けた日を 0 で埋めるか、範囲指定 (`RANGE`) を使います(`RANGE` の間隔指定の書き方は製品で違います)。「この数字は本当に 7 日か」と自分から指摘できると、評価が上がります。
+1 つ目は `row_number` で、顧客ごとの先頭の行を取る定番の形です。DuckDB には `QUALIFY` という、窓関数の結果で絞る構文があり、サブクエリなしで書けます。ただし PostgreSQL や標準 SQL にはない書き方なので、面接で使うなら、どこで動くかを一言添えてください。2 つ目は、「直近 7 日」を `ROWS BETWEEN 6 PRECEDING` で書いたものです。これは直近の **7 行**であって、注文の無い日の行が無ければ、7 日ではありません。7 日にしたいなら、日付の表と結合して欠けた日を 0 で埋めるか、範囲指定 (`RANGE`) を使います(`RANGE` の間隔指定の書き方は製品で違います)。「この数字は本当に 7 日か」と自分から指摘できると、数字を疑う習慣があることが伝わります。
 
 **モデリング。** 第8章の 4 つの手順をそのまま口に出します。「まず業務の質問を確かめ、粒度を決めて、ファクトとディメンションを分け、履歴の持ち方を決めます」。
 
 **パイプラインの設計。** 「毎朝の売上レポートの基盤を設計してください」のような問いでは、いきなり道具の名前を並べないことです。鮮度(翌朝までか)、正しさ(どの定義か)、量(何行か)を、聞き返します。次に、取り込み・保存・変換・品質・運用の順に、選んだ理由と、**選ばなかった案**を言います。この章の設計メモの構成が、そのまま答えの骨組みになります。
 
-**障害対応。** 「朝に数字がおかしいと言われたら」という問いには、順序で答えます。まず間違った数字が使われ続けないように止める(止血)。次に影響範囲(いつから、どのテーブルとレポートか)。原因を調べて直す。最後に、再発を防ぐテストと通知を足す。原因探しの前に止血を言えるかを、見られることが多いです。
+**障害対応。** 「朝に数字がおかしいと言われたら」という問いには、順序で答えます。まず間違った数字が使われ続けないように止める(止血)。次に影響範囲(いつから、どのテーブルとレポートか)。原因を調べて直す。最後に、再発を防ぐテストと通知を足す。原因探しの前に止血を言えるかを、確かめる面接官もいます。
 
 答えるときの注意が 2 つあります。分からないことは「分かりません。こう調べます」と言うこと。経験していないことを、したように話さないこと。この本の演習で作ったものは、「自分で作って確かめた」と堂々と言える題材です。
 
@@ -396,7 +395,7 @@ SELECT (SELECT count(*) FROM analytics.stg_orders) AS orders,
 
 - **全部を 1 つのスクリプトに詰めて、途中の結果を残さない。** 失敗したとき、どの工程が悪いか分からなくなります。この演習のように、工程ごとに置き場(landing・raw・mart)を分けます。
 - **動いたところで終わって、壊れたときを試さない。** 止まり方も、再実行も、テストで確かめます。
-- **品質チェックが全部 error、または全部 warn。** 全部 error だと、頻繁に止まって誰も見なくなり、全部 warn だと、何も止まりません。売上の数字が壊れるものだけを error にします。
+- **品質チェックが全部 error、または全部 warn。** 全部 error だと、頻繁に止まって見られなくなりがちで、全部 warn だと、何も止まりません。売上の数字が壊れるものだけを error にします。
 - **README に動かし方だけがあって、理由が無い。** 引き継ぐ人が最初に知りたいのは、なぜそうなっているかです。
 - **ポートフォリオに秘密や実データが入る。** 公開前に、履歴も含めて確かめます。
 - **最初の 90 日で作り直そうとする。** 読む・聞く・小さく直すを先にします。
@@ -406,7 +405,7 @@ SELECT (SELECT count(*) FROM analytics.stg_orders) AS orders,
 ## まとめ
 
 - 基礎編の総仕上げとして、取り込み → raw → 変換 → 品質チェック → 図を 1 本で通しました。大事なのは、壊れたときに、どこで止まるかです。
-- 書きかけを読まない (`_SUCCESS`)、同じ日付で再実行しても同じ (冪等)、error の不合格では図を作らない、という決まりを、コードとテストの両方に入れました。
+- 書きかけを読まない (`_SUCCESS` を最後に置き、置き直す前に前回の印を消す)、同じ日付で再実行しても同じ (冪等)、error の不合格では図を作らない、という決まりを、コードとテストの両方に入れました。
 - 設計メモは「決めたこと・理由・限界・次にやること」を書きます。ポートフォリオは再現できることと判断が見えることが大事で、秘密と実データは入れません。
 - 最初の 90 日は、読む・聞く・小さく直す。学び続けるには、公式ドキュメントとリリースノートを一次情報にします。
 - 面接では、分野ごとの答えの型 (粒度の確認、要件を聞き返す、止血から始める) を持ちます。
@@ -421,12 +420,12 @@ SELECT (SELECT count(*) FROM analytics.stg_orders) AS orders,
 問1. `examples/b16/quality.py` の `CHECKS` に、「`fct_daily_sales` の売上に負の値が無い」という error の確認を 1 件足してください。足したあと、パイプラインが通ることを確かめ、そのうえで、どんな状況でその確認が不合格になるかを 1 つ挙げてください。
 
 ??? note "解答例"
-    たとえば `Check("日別売上に負の値が無い", "error", "SELECT count(*) FILTER (WHERE sales < 0), count(*) FROM analytics.fct_daily_sales")` を足します。bad が 0 なら合格で、通ります。不合格になるのは、返品の行 (数量が負の明細) が raw に混ざり、日の合計が負になるような場合です。この確認が error なのは、売上の数字そのものが壊れるためです。なお、足したら `test_b16_project.py` の件数の確認 (`len(quality.CHECKS)`) は自動で追従しますが、「落ちたのは warn の 1 件だけ」の確認は、そのまま通ることを実行して確かめてください。
+    たとえば `Check("日別売上に負の値が無い", "error", "SELECT count(*) FILTER (WHERE sales < 0), count(*) FROM analytics.fct_daily_sales")` を足します。bad が 0 なら合格で、通ります。不合格になるのは、返品の行 (数量が負の明細) が raw に混ざり、日の合計が負になるような場合です。この確認が error なのは、売上の数字そのものが壊れるためです。なお `FILTER (WHERE …)` は標準 SQL の書き方で、PostgreSQL でも動きます (DuckDB 独自ではありません)。なお、足したら `test_b16_project.py` の件数の確認 (`len(quality.CHECKS)`) は自動で追従しますが、「落ちたのは warn の 1 件だけ」の確認は、そのまま通ることを実行して確かめてください。
 
-問2. この演習の `ingest.py` の `land` で、`_SUCCESS` を置く行を、表を置く前に移すと、何が起きますか。テストのうち、どれがそれを見つけますか。見つけない場合は、どんなテストを足しますか。
+問2. `examples/b16/ingest.py` の `land` から、最初の `s3.delete_object(...)` の行 (前回の `_SUCCESS` を消す行) を消すと、`test_b16_project.py` のどのテストが落ちますか。理由とあわせて答えてください。実際に消して動かして確かめてください。
 
 ??? note "解答例"
-    読む側は印があれば読むので、置いている途中の `dt` を、書きかけのまま読めてしまいます。既存のテストは、最後まで通った結果しか見ておらず、`test_load_refuses_partition_without_success_marker` は印が無いときの拒否だけを確かめるので、順序の入れ替えは見つけません。足すなら、テスト用の `store` に `put` の呼び出し順を記録させ、`_SUCCESS` のキーが最後であることを確かめます。
+    `test_land_removes_old_marker_first_and_puts_new_one_last` (呼び出しの最初が `delete` でなくなる) と、`test_interrupted_reland_leaves_no_marker_and_load_refuses` (1 回目の成功で置かれた印が残ったまま、2 回目が途中で落ちるので、`load_raw` が拒否せずに読んでしまう) の 2 つが落ちます。後者は、書きかけの状態を「置き終わっている」と誤って読んでしまう、実際の事故そのものを再現しています。
 
 問3. 面接で「ダッシュボードの売上が、昨日と比べて半分になっている」と言われました。最初の 3 つの行動を、順序の理由とともに答えてください。
 
@@ -438,6 +437,11 @@ SELECT (SELECT count(*) FROM analytics.stg_orders) AS orders,
 ??? note "解答例"
     作業ツリーだけでなく履歴も調べます。たとえば `git log -p` の出力を `grep -i -E "password|secret|api[_-]?key|token"` にかける、`git ls-files` で `.env` やキーのファイルが追跡されていないかを見る、`.gitignore` に `.env` が入っているかを見る、の 3 つです。専用の検出ツールを使うこともできます。見つかったら、履歴から消すだけでなく、そのキーを失効させて作り直します。公開した後で消しても、すでにコピーされているおそれがあるためです。
 
+問5. 自分の題材のデータ (公開データや、自分で作った架空のデータ) で、小さなパイプラインを 1 本作ってください。作ったら、上の 7 項目で設計メモを書いてください。書いたあと、新しい環境 (別のフォルダ、または別のマシン) で、メモの「動かし方」だけを見て動くかを確かめます。
+
+??? note "解答例"
+    正解は 1 つではありません。点検の観点は 3 つです。(1) 「決めたこと」に、数字の定義とその理由があるか。(2) 「品質チェックと止める基準」で、error と warn を分けた理由が書いてあるか。(3) 「既知の限界」に、書くのが少し恥ずかしいことも含めて、3 つ以上あるか。動かし方で詰まった箇所は、そのままメモを直す材料になります。
+
 ## 参考文献
 
 1. Joe Reis, Matt Housley. *Fundamentals of Data Engineering*. O'Reilly Media, 2022.（全体の設計判断、取り込み、変換、提供）
@@ -446,7 +450,7 @@ SELECT (SELECT count(*) FROM analytics.stg_orders) AS orders,
 4. Matt Palmer. *Understanding ETL*. O'Reilly Media (Databricks 提供版), 2024.（取り込み、変換、オーケストレーション、障害の対処）
 5. PostgreSQL Documentation. "Release Notes". <https://www.postgresql.org/docs/release/>
 6. Apache Airflow Documentation. "Release Notes". <https://airflow.apache.org/docs/apache-airflow/stable/release_notes.html>
-7. dbt Documentation. "dbt release notes". <https://docs.getdbt.com/docs/dbt-versions/dbt-cloud-release-notes>
+7. dbt Documentation. "Upgrading to new versions of dbt Core" (各版の変更点)。<https://docs.getdbt.com/docs/dbt-versions/core-upgrade>
 8. DuckDB. "News". <https://duckdb.org/news/>
 9. Apache Kafka Documentation. <https://kafka.apache.org/documentation/>
 10. Docker Documentation. <https://docs.docker.com/>

@@ -1,6 +1,6 @@
 工程,使う章,ファイル,失敗したときの動き
-取り込み (landing に置く),第9章,examples/b16/ingest.py の land,置き終えるまで _SUCCESS が無いので、後ろの工程は読まない
+取り込み (landing に置く),第9章,examples/b16/ingest.py の land (events は第9章の land_events),前回の _SUCCESS を消してから置き直し、全部置き終えたら最後に _SUCCESS を置く
 raw に読み込む,第9章・第14章,examples/b16/ingest.py の load_raw,_SUCCESS が無ければ RuntimeError で止まる
-変換 (staging と mart),第10章,examples/b16/dbt/,dbt のテストが落ちると dbt build が失敗して止まる
-品質チェック,第13章,examples/b16/quality.py,error が不合格なら QualityError で止まる。warn は記録して進む
+変換 (staging と mart),第10章,examples/b10/ の dbt プロジェクト,dbt のテストが落ちると dbt build が失敗して止まる
+品質チェック,第13章の考え方,examples/b16/quality.py,error が不合格なら QualityError で止まる。warn は記録して進む
 図にする,この章,examples/b16/dashboard.py,前の工程が止まれば動かない

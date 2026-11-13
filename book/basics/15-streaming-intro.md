@@ -304,7 +304,7 @@ def handle(con, msg):
     """, [event["event_time"]])
 ```
 
-`events_sink` は `event_id` を主キーにして、`ON CONFLICT ... DO UPDATE` で上書きします。同じ `event_id` が何度来ても、行は 1 行です。`ON CONFLICT` の書き方は PostgreSQL と DuckDB にあります。MySQL では `ON DUPLICATE KEY UPDATE`、標準 SQL には `MERGE` があり (第9章)、製品によって書き方が違います。
+`events_sink` は `event_id` を主キーにして、`ON CONFLICT ... DO UPDATE` で上書きします (行が無ければ追加、あれば更新する書き方をアップサートと呼びます)。同じ `event_id` が何度来ても、行は 1 行です。`ON CONFLICT` の書き方は PostgreSQL と DuckDB にあります。MySQL では `ON DUPLICATE KEY UPDATE`、標準 SQL には `MERGE` があり (第9章)、製品によって書き方が違います。
 
 もう 1 つの `naive_counts` は、比べるための悪い例です。届くたびに閲覧数を 1 足します。重複が来るたびに数字が膨らみ、前の節の出力のように 205、410 と増えました。1 件ずつ足し込む集計は、一見自然ですが、at-least-once とは相性が悪いのです。
 

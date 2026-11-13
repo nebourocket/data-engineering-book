@@ -1,6 +1,6 @@
 本,向く人・読み方,この本の章との対応
-Fundamentals of Data Engineering (Reis・Housley),全体の地図を持ちたい人。ライフサイクルの各段階の設計判断を読む,第1章・第9章・第15章の参考文献
-Understanding ETL (Palmer),短く全体像をつかみたい人。取り込み・変換・オーケストレーション・障害の対処,第9章から第13章
-Kafka: The Definitive Guide 2nd Edition (早期公開版),ストリームの基本概念の原典に当たりたい人。収録は第1章と管理 API の章だけ,第15章
+Fundamentals of Data Engineering (Reis・Housley),全体の地図を持ちたい人。ライフサイクルの各段階の設計判断を読む,第1章・第7章・第9章・第15章の参考文献
+Understanding ETL (Palmer),短く全体像をつかみたい人。取り込み・変換・オーケストレーション・障害の対処,第9章から第13章に近い内容
+Kafka: The Definitive Guide 2nd Edition (早期公開版),ストリームの基本概念の原典に当たりたい人。収録は第1章と管理 API の章だけ,第15章の参考文献
 Learning Spark 2nd Edition,大きなデータの分散処理に進みたい人,応用編 第1章・第2章への橋渡し
-Agile Data Science 2.0,データ製品を小さく作って育てる進め方を見たい人。ツールの版は 2017 年当時,この章の「小さく作る」
+Agile Data Science 2.0,データ製品を小さく作って育てる進め方を見たい人。ツールの版は 2017 年当時,この章の「小さく作る」の考え方

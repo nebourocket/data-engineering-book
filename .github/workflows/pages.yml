@@ -16,6 +16,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # 図の日本語ラベル用フォント（pytest と mkdocs build が使います）。
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
       - run: pip install -r requirements.txt
       # postgres・minio・redpanda は services では起動引数を渡せないため、compose.yaml で起動します。
       - run: docker compose up -d --wait
@@ -74,6 +76,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # 図の日本語ラベル用フォント（mkdocs build が使います）。
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
       - run: pip install -r requirements.txt
       # mkdocs build の中で hooks/figures.py が図を作ります。
       - run: mkdocs build --strict

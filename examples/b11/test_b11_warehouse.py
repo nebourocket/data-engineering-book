@@ -158,3 +158,15 @@ def test_materialized_view_is_a_snapshot(pg_dsn):
             con.execute("RESET ROLE")
             for sql in _statements("cleanup_pg.sql"):
                 con.execute(sql)
+
+
+def test_tiny_tables_are_up_to_date():
+    import csv
+
+    tiny = _load("tiny_tables")
+    for name, (header, rows) in tiny.tables().items():
+        with (HERE.parents[1] / "data" / "tables" / f"{name}.csv").open(encoding="utf-8", newline="") as f:
+            assert list(csv.reader(f)) == [header] + [[str(c) for c in r] for r in rows], name
+    zone = tiny.zonemap_rows()
+    assert [r[-1] for r in zone].count("読む") == 5  # ばらばら 4 つ + 並べ替え済み 1 つ
+    assert tiny.partial_rows()[-2][-1] == 175.0 and tiny.partial_rows()[-1][-1] == 150.0

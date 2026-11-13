@@ -11,7 +11,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-BASICS_RANGE = (7000, 16000)
+BASICS_RANGE = (7000, 20000)
 ADVANCED_RANGE = (10000, 20000)
 
 FIRST_H2 = "この章でできるようになること"

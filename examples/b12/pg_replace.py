@@ -34,6 +34,8 @@ def replace_day(con: psycopg.Connection, day: str, csv_path: Path) -> int:
 
 if __name__ == "__main__":
     day = sys.argv[1]
+    if "PG_DSN" not in os.environ:
+        sys.exit("環境変数 PG_DSN がありません。例: export PG_DSN=postgresql://deb:deb@localhost:5432/deb（README の「サービスを使う章」）")
     with psycopg.connect(os.environ["PG_DSN"], autocommit=True) as con:
         con.execute(CREATE_TABLE)
         n = replace_day(con, day, Path("work/out/daily_sales") / f"date={day}.csv")

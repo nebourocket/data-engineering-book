@@ -267,3 +267,17 @@ def test_append_job_doubles_on_rerun(source, tmp_path):
     once = naive.total(out)
     naive.process_append("2026-03-05", source, out)
     assert once == 257_150 and naive.total(out) == 2 * once  # 冪等でないので、再実行で倍になる
+
+
+def test_interval_table_is_up_to_date():
+    table = _load("interval_table")
+    with table.OUT.open(encoding="utf-8", newline="") as f:
+        assert list(csv.reader(f)) == [table.HEADER] + table.rows()
+    assert table.manual("2026-03-05")[-1] == "2026-03-04"  # 3/5 を指定した手動実行は、3/4 の分を処理する
+
+
+def test_summarize_and_write_replace_are_separate_steps(source, tmp_path):
+    rows = job.summarize("2026-03-05", source)
+    assert len(rows) == 5 and not (tmp_path / "out").exists()  # 計算だけでは、何も書かない
+    job.write_replace("2026-03-05", tmp_path / "out", rows)
+    assert len(read_day(tmp_path / "out", "2026-03-05")) == 5

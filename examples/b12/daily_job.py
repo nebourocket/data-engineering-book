@@ -42,18 +42,18 @@ def source_ready(day: str, source_root: Path) -> bool:
     return (source_root / f"date={check_day(day)}" / "_SUCCESS").exists()
 
 
-def process(day: str, source_root: Path, out_dir: Path) -> int:
-    """day の売上をカテゴリ別に集計し、その日のファイルを丸ごと置き換えます。書いた行数を返します。
+def summarize(day: str, source_root: Path) -> list[tuple]:
+    """第 1 段（計算）: その日の売上をカテゴリ別に集計し、(日付, カテゴリ, 注文数, 売上) の行のリストを返す。
 
-    追記はしません。書き出しは一時ファイルに行い、最後に os.replace で入れ替えるので、
-    途中で失敗しても前回のファイルは壊れず、書きかけが公開されることもありません。
+    ここではファイルを書かない。失敗しても、出力側には何も起きない。
     """
     day = check_day(day)
     if not source_ready(day, source_root):
         raise FileNotFoundError(f"{day} の元データがまだ届いていません（_SUCCESS がありません）")
     # read_csv は DuckDB の関数で、CSV を表として読みます（PostgreSQL にはありません）。
     # 注文のない日は見出しだけの CSV なので、型を指定して数値の列を数値として読みます。
-    rows = duckdb.connect().execute(
+    # SQL の ? は「値の差し込み口」で、後ろのリストの値が順に入る（文字列を直接つなぐより安全です）。
+    return duckdb.connect().execute(
         """
         SELECT CAST(? AS DATE) AS date, category, count(DISTINCT order_id) AS orders,
                sum(quantity * unit_price) AS revenue
@@ -63,19 +63,35 @@ def process(day: str, source_root: Path, out_dir: Path) -> int:
         ORDER BY category
         """, [day, str(source_root / f"date={day}" / "sales.csv")]).fetchall()
 
+
+def write_replace(day: str, out_dir: Path, rows: list[tuple]) -> None:
+    """第 2 段（安全に書く）: その日のファイルを丸ごと置き換える。
+
+    追記はしません。書き出しは一時ファイルに行い、最後に os.replace で入れ替えるので、
+    途中で失敗しても前回のファイルは壊れず、書きかけが公開されることもありません。
+    """
     target = out_dir / "daily_sales" / f"date={day}.csv"
     target.parent.mkdir(parents=True, exist_ok=True)
+    # mkstemp は、同じフォルダに一時ファイルを作り、(開いたファイルの番号, パス) を返す
     fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{day}-", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:  # 番号を普通のファイルオブジェクトにする
             writer = csv.writer(f)
             writer.writerow(COLUMNS)
             writer.writerows(rows)
         os.chmod(tmp, 0o644)  # mkstemp は本人しか読めない 0600 で作るので、読む側のために 0644 にする
-        os.replace(tmp, target)
+        os.replace(tmp, target)  # 名前の付け替え。これで初めて、読む側から新しいファイルが見える
     except BaseException:
+        # Exception だけでなく、Ctrl+C（KeyboardInterrupt）のような中断でも、一時ファイルを消してから投げ直す
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+def process(day: str, source_root: Path, out_dir: Path) -> int:
+    """day の売上を集計し、その日のファイルを置き換える。書いた行数を返す（冪等）。"""
+    day = check_day(day)
+    rows = summarize(day, source_root)
+    write_replace(day, out_dir, rows)
     return len(rows)
 
 

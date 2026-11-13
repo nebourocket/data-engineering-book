@@ -197,6 +197,8 @@ landing/<ソース>/dt=<受信日>/part-0000.jsonl.gz
 
 {{ table("b09-arrival-detection") }}
 
+置き直すときの順番にも決まりがあります。前回の `_SUCCESS` を残したまま新しいファイルを置き始めると、置いている途中で止まったとき、古い印が残っているので、書きかけのパーティションが「置き終わっている」ように見えてしまいます。そこで、**先に前回の印を消し、ファイルを置き、最後に新しい印を置きます**。印が無い間、そのパーティションは読まれません。
+
 次のコードが、置く側と見つける側です。
 
 ```python
@@ -207,9 +209,12 @@ def land_events(s3, bucket, events, part=0):
         by_day.setdefault(event["received_at"][:10], []).append(event)
     for dt, rows in by_day.items():
         body = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows).encode("utf-8")
+        marker = f"landing/events/dt={dt}/_SUCCESS"
+        # 置き直す前に、前回の印を消す (残っていると、途中で止まったとき書きかけが「置き終わり」に見える)
+        s3.delete_object(Bucket=bucket, Key=marker)
         s3.put_object(Bucket=bucket, Key=partition_key("events", dt, part), Body=gzip.compress(body))
         # 全部置き終えた印。読む側は、この印があるパーティションだけを読む
-        s3.put_object(Bucket=bucket, Key=f"landing/events/dt={dt}/_SUCCESS", Body=b"")
+        s3.put_object(Bucket=bucket, Key=marker, Body=b"")
     return sorted(by_day)
 
 

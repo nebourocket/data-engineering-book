@@ -257,3 +257,31 @@ def test_new_column_does_not_break_ingestion(s3_client, bucket):
     assert landing.load_partition(duck, s3_client, bucket, "2026-03-01") == 1
     assert duck.execute("SELECT extra, source_file FROM events_raw").fetchone() == (
         '{"coupon_code": "SPRING"}', "landing/events/dt=2026-03-01/part-0000.jsonl.gz")
+
+
+class RecordingS3:
+    """boto3 のクライアントを包み、put と delete の呼び出し順を記録します。"""
+
+    def __init__(self, client):
+        self.client, self.calls = client, []
+
+    def put_object(self, **kw):
+        self.calls.append(("put", kw["Key"]))
+        return self.client.put_object(**kw)
+
+    def delete_object(self, **kw):
+        self.calls.append(("delete", kw["Key"]))
+        return self.client.delete_object(**kw)
+
+
+def test_land_events_deletes_old_marker_first_and_puts_new_one_last(s3_client, bucket):
+    events = generate()["events"]
+    landing.land_events(s3_client, bucket, events)  # 1 回目 (印がある)
+    recorder = RecordingS3(s3_client)
+    days = landing.land_events(recorder, bucket, events)  # 置き直し
+    for dt in days:
+        marker = f"landing/events/dt={dt}/_SUCCESS"
+        calls = [c for c in recorder.calls if f"dt={dt}/" in c[1]]
+        assert calls[0] == ("delete", marker)  # 最初に前回の印を消す
+        assert calls[-1] == ("put", marker)  # 印を置くのは最後
+        assert sum(1 for c in calls if c == ("put", marker)) == 1

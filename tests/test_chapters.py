@@ -170,7 +170,7 @@ def test_block_must_be_in_single_file(env):
 def test_short_block_needs_whole_token_match(env):
     (env / "examples" / "b01" / "a.sh").write_text("echo false\n", encoding="utf-8")
     assert any("examples/b01" in e for e in run(env, make_chapter(extra="```bash\nech\n```\n\n")))
-    assert run(env, make_chapter(extra="```bash\nfalse\n```\n\n")) == []
+    assert run(env, make_chapter(extra="```bash excerpt\nfalse\n```\n\n")) == []
 
 
 def test_open_admonition_solution_counts(env):
@@ -326,3 +326,115 @@ def test_python_uniformly_indented_fragment_passes(env):
 
 def test_bash_uniformly_indented_fragment_passes(env):
     assert syntax_run(env, "bash", "  echo a\n  echo b") == []
+
+
+# ---- 文を丸ごと写しているか（python・sql・bash）----
+
+def whole_run(env, lang, code, source, fname, info_extra=""):
+    """examples に fname で source を置き、code を写したブロック 1 つの章を検査します。"""
+    (env / "examples" / "b01" / fname).write_text(source, encoding="utf-8")
+    return run(env, make_chapter(extra=f"```{lang}{info_extra}\n{code}\n```\n\n"))
+
+
+READ_PY = (
+    "def read_in_batches(cur):\n"
+    "    last_id = 0\n"
+    "    while True:\n"
+    "        rows = cur.fetchmany(100)\n"
+    "        if not rows:\n"
+    "            break\n"
+    "        yield rows\n"
+    "        last_id = rows[-1][0]\n"
+)
+
+
+def test_python_whole_function_passes(env):
+    assert whole_run(env, "python", READ_PY, READ_PY, "a.py") == []
+
+
+def test_python_truncated_function_body_fails(env):
+    code = READ_PY.replace("        last_id = rows[-1][0]\n", "")
+    errors = whole_run(env, "python", code, READ_PY, "a.py")
+    assert any("a.py" in e and "excerpt" in e for e in errors)
+
+
+def test_python_truncated_body_excerpt_passes(env):
+    code = READ_PY.replace("        last_id = rows[-1][0]\n", "")
+    assert whole_run(env, "python", code, READ_PY, "a.py", " excerpt") == []
+
+
+def test_python_body_statements_of_def_pass(env):
+    code = "    last_id = 0\n    while True:\n        rows = cur.fetchmany(100)\n        if not rows:\n            break\n        yield rows\n        last_id = rows[-1][0]"
+    assert whole_run(env, "python", code, READ_PY, "a.py") == []
+
+
+def test_python_consecutive_statements_pass(env):
+    src = "import os\na = 1\nb = a + 1\nprint(b)\n"
+    assert whole_run(env, "python", "a = 1\nb = a + 1", src, "a.py") == []
+
+
+def test_python_half_statement_fails(env):
+    src = "if True:\n    a = 1\n    b = 2\n"
+    errors = whole_run(env, "python", "if True:\n    a = 1", src, "a.py")
+    assert any("a.py" in e for e in errors)
+
+
+def test_python_decorated_function_passes(env):
+    src = "@cache\ndef f():\n    return 1\n"
+    assert whole_run(env, "python", src, src, "a.py") == []
+
+
+def test_python_in_non_py_file_keeps_substring_rule(env):
+    code = READ_PY.replace("        last_id = rows[-1][0]\n", "")
+    assert whole_run(env, "python", code, READ_PY, "a.txt") == []
+
+
+SQL_PY = 'Q1 = """\nSELECT id\nFROM orders\n"""\nQ2 = f"""\nSELECT * FROM {table}\n"""\n'
+
+
+def test_sql_whole_string_constant_passes(env):
+    assert whole_run(env, "sql", "SELECT id\nFROM orders", SQL_PY, "a.py") == []
+
+
+def test_sql_fstring_placeholder_passes(env):
+    assert whole_run(env, "sql", "SELECT * FROM {table}", SQL_PY, "a.py") == []
+
+
+def test_sql_part_of_string_fails(env):
+    errors = whole_run(env, "sql", "SELECT id", SQL_PY, "a.py")
+    assert any("a.py" in e and "excerpt" in e for e in errors)
+
+
+def test_sql_spanning_triple_quotes_fails(env):
+    errors = whole_run(env, "sql", "FROM orders\n\"\"\"\nQ2 = f\"\"\"\nSELECT * FROM {table}", SQL_PY, "a.py")
+    assert any("a.py" in e for e in errors)
+
+
+def test_sql_part_of_string_excerpt_passes(env):
+    assert whole_run(env, "sql", "SELECT id", SQL_PY, "a.py", " excerpt") == []
+
+
+def test_sql_in_sql_file_keeps_substring_rule(env):
+    assert whole_run(env, "sql", "SELECT id", "SELECT id , name FROM t;\n", "a.sql") == []
+
+
+SH = "set -e\necho a\necho b\n"
+
+
+def test_bash_whole_lines_pass(env):
+    assert whole_run(env, "bash", "echo a\necho b", SH, "a.sh") == []
+
+
+def test_bash_mid_line_fails(env):
+    errors = whole_run(env, "bash", "echo", SH, "a.sh")
+    assert any("a.sh" in e and "excerpt" in e for e in errors)
+
+
+def test_bash_mid_line_excerpt_passes(env):
+    assert whole_run(env, "bash", "echo", SH, "a.sh", " excerpt") == []
+
+
+def test_python_leading_comment_optional(env):
+    src = "# 説明\na = 1\nb = 2\n"
+    assert whole_run(env, "python", "a = 1\nb = 2", src, "a.py") == []
+    assert whole_run(env, "python", src, src, "a.py") == []

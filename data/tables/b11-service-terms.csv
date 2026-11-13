@@ -1,0 +1,7 @@
+概念,BigQuery,Snowflake,Amazon Redshift,Databricks SQL
+計算の単位,スロット（仮想 CPU）,仮想ウェアハウス,ノード（プロビジョンド）／ RPU（Serverless）,SQL ウェアハウス
+ファイルを分ける仕組み,パーティション（日付・整数など。指定する）,マイクロパーティション（自動）,ローカルの表にパーティションは無い（Spectrum の外部表には有る）。並べ方はソートキー,Delta テーブルのパーティション（指定する。新しい表では Liquid Clustering が推奨）
+並べ方の指定,クラスタリング（CLUSTER BY）,クラスタリングキー（CLUSTER BY）,ソートキー（SORTKEY）と分散キー（DISTKEY）,Liquid Clustering（CLUSTER BY。パーティションと ZORDER に代わる方法として推奨）
+事前に計算した結果,マテリアライズドビュー,マテリアライズドビュー（Enterprise 以上）,マテリアライズドビュー,マテリアライズドビュー
+データの置き場,独自の列指向ストレージ,独自形式（クラウドのストレージ上）,RA3 は管理ストレージ（S3 が土台）,Delta Lake（Parquet）をクラウドのストレージに置く
+アクセス制御,IAM ロールと、行・列単位のポリシー,ロール（RBAC）と GRANT,GRANT と IAM,Unity Catalog の GRANT

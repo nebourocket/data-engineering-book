@@ -8,3 +8,4 @@ book/assets/figures/
 
 shop.duckdb
 *.duckdb.wal
+work/

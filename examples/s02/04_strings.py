@@ -1,7 +1,7 @@
 shop = "ねぼすけ商店"
 item = 'アイマスク'
 quantity = 3
-total = 5060
+total = 4460
 
 print(shop + "の" + item)
 print(len(shop))

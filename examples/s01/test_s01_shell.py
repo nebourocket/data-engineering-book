@@ -41,13 +41,14 @@ def test_first_commands(home):
 
 
 def test_paths(home):
+    # 本文では 1 の続きとして 2 を打つので、同じ HOME で 01 のあとに 02 を動かし、2 の出力だけを見る。
+    run("01_first_commands.sh", home)
     code, out = run("02_paths.sh", home)
     assert code == 0
     assert out == (
         "/home/taro/deb-practice/data\n"
         "/home/taro/deb-practice\n"
-        "data\n"
-        ".\n..\n.hidden\ndata\n"
+        "data\nmemo.txt\n.\n..\n.hidden\ndata\nmemo.txt\n"
         "/home/taro\n"
         "/home/taro\n")
 

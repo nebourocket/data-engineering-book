@@ -33,7 +33,7 @@ def test_shop():
 
 def test_strings():
     assert run("04_strings.py") == (0, (
-        "ねぼすけ商店のアイマスク\n6\nアイマスクを3個、合計5060円です\n1行目\n2行目\n"
+        "ねぼすけ商店のアイマスク\n6\nアイマスクを3個、合計4460円です\n1行目\n2行目\n"
         "He said 'good morning'\nNEBOSUKE\nnebosuke\nFalse\nTrue\n"))
 
 

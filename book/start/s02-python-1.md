@@ -72,13 +72,28 @@ Type "help", "copyright", "credits" or "license" for more information.
 
 ### .py ファイルを作って動かす
 
-次に、ファイルで動かします。VS Code (第 1 章で入れました) を開き、作業用のフォルダ (たとえば `~/work/nebosuke-py`) の中に、`01_hello.py` という名前で、次の 1 行だけ書いて保存します。
+次に、ファイルで動かします。手順は次のとおりです。
+
+```text
+1. ターミナルで、作業用のフォルダを作る。
+     mkdir -p ~/work/nebosuke-py
+   (Mac では、ホームフォルダ /Users/ユーザー名 の下の work フォルダです。第 1 章で作っていれば、その中に作られます)
+2. そのフォルダを VS Code で開く。
+     cd ~/work/nebosuke-py
+     code .
+3. VS Code の左側の「新しいファイル」のアイコンを押し、名前に 01_hello.py と打つ。
+4. 開いたファイルに、下の 1 行を書く。
+5. Ctrl+S (Mac は ⌘+S) で保存する。
+6. VS Code の中のターミナル (Ctrl+`) で、下の docker run を打つ。
+```
+
+ファイルに書く 1 行は、これです。
 
 ```python
 print("おはよう、ねぼすけ商店")
 ```
 
-そのフォルダで、ターミナルから次のように打ちます。
+そのフォルダ (`nebosuke-py`) の中で、次のように打ちます。
 
 ```bash
 docker run --rm -v "$PWD":/w -w /w de-book-dev python 01_hello.py
@@ -92,7 +107,7 @@ docker run --rm -v "$PWD":/w -w /w de-book-dev python 01_hello.py
 
 ここで、**保存し忘れ**に注意してください。VS Code では、保存していないファイルは、タブの名前の横に丸い印が付きます。保存せずに実行すると、前の内容のまま動きます。Ctrl+S (Mac は ⌘+S) で保存してから動かす癖を付けてください。
 
-この本のコードは、ここまでの 3 つのコマンド (対話モード・ファイル・入力ありのファイル) の `docker run` を、`examples/s02/08_run.sh` にまとめてあります。この 3 行も、テストでは文法の確認 (`bash -n`) のみです。
+この本のコードは、リポジトリの `examples/s02/` にもあります。
 
 ## print で表示する
 
@@ -180,7 +195,7 @@ print(0.1 + 0.2)
 0.30000000000000004
 ```
 
-答えは 0.3 のはずなのに、末尾に余計な数字が付きます。バグではありません。コンピューターは数を 2 進数で扱うので、`0.1` のような小数を、ぴったり表せないことがあります。Python の公式チュートリアルにも、同じ例と説明があります。
+答えは 0.3 のはずなのに、末尾に余計な数字が付きます。バグではありません。コンピューターは数を 2 進数で扱うので、`0.1` のような小数を、ぴったり表せないことがあります。Python の公式チュートリアルにも、同じ仕組みの説明があります。
 
 だから、**お金のように1円の誤差も許されない計算は、小数を避け、整数 (円) で扱います**。この章の商店の計算も、金額は整数で計算します。
 
@@ -273,7 +288,7 @@ Python の公式のスタイルガイド (PEP 8) は、変数の名前を小文�
 shop = "ねぼすけ商店"
 item = 'アイマスク'
 quantity = 3
-total = 5060
+total = 4460
 ```
 
 以降の例では、この4つの変数が入っているものとします。
@@ -296,21 +311,21 @@ print(len(shop))
 
 ### f-string: 文章に値を埋め込む
 
-「アイマスクを 3 個、合計 5060 円です」のような文章を、変数から作りたい場合を考えます。`+` でつなぐと、数を文字列に変換する必要があって面倒です。便利なのが **f-string** です。引用符の前に `f` を付け、中の `{ }` の中に変数や式を書くと、その値が埋め込まれます。
+「アイマスクを 3 個、合計 4460 円です」のような文章を、変数から作りたい場合を考えます。`+` でつなぐと、数を文字列に変換する必要があって面倒です。便利なのが **f-string** です。引用符の前に `f` を付け、中の `{ }` の中に変数や式を書くと、その値が埋め込まれます。
 
 ```python
 print(f"{item}を{quantity}個、合計{total}円です")
 ```
 
 ```text
-アイマスクを3個、合計5060円です
+アイマスクを3個、合計4460円です
 ```
 
-`{item}` が `アイマスク`、`{quantity}` が `3`、`{total}` が `5060` に置き換わっています。`{ }` の中には、`{price * quantity}` のように計算式も書けます。`f` を付け忘れると、`{item}` がそのまま画面に出ます。波かっこ `{ }` も半角です。
+`{item}` が `アイマスク`、`{quantity}` が `3`、`{total}` が `4460` に置き換わっています。`{ }` の中には、`{price * quantity}` のように計算式も書けます。`f` を付け忘れると、`{item}` がそのまま画面に出ます。波かっこ `{ }` も半角です。
 
 ### 改行と引用符
 
-特別な文字は、`\n` のように、バックスラッシュ (Windows のキーボードでは `\` 、日本語配列では `¥` キー) で書きます。`\n` は改行を表します。
+特別な文字は、`\n` のように、バックスラッシュ `\` で書きます。日本語キーボードでは `¥` キーを押すと `\` が入力されます (Mac は Option キーを押しながら `¥` キー)。`\n` は改行を表します。
 
 ```python
 print("1行目\n2行目")
@@ -442,8 +457,6 @@ docker run --rm -it -v "$PWD":/w -w /w de-book-dev python 06_input.py
 
 プログラムは `input("お名前は? ")` のところで止まり、Enter キーを押すまで待ちます。打った文字は、変数 `name` に入ります。ここで大事なのは、**`input` が返す値は、数を打っても必ず文字列**だということです。`3` と打っても、`"3"` という文字列です。だから、個数は `int(input("個数は? "))` と書いて、整数に変換しています。`int` を忘れて `price * count` を計算すると、`1200 * "3"` となり、`"3"` が 1200 回つながった長い文字列が出てしまいます。
 
-> この `06_input.py` は、テストでは標準入力に `ねぼ` と `3` を流し込み、案内文と結果が本文のとおりに出ることを確かめています。
-
 ## コメント
 
 プログラムの中に、人のためのメモを書けます。`#` から行末までが**コメント**で、Python は無視します。
@@ -456,7 +469,7 @@ docker run --rm -it -v "$PWD":/w -w /w de-book-dev python 06_input.py
 
 ## エラーを読む
 
-ここまでで、基本の文法はそろいました。プログラムを書けば、必ずエラーに出会います。ここでは、よく出る 5 つのエラーを**わざと起こして**、読み方を覚えます。どれも、本物の Python が出した表示です。
+ここまでで、基本の文法はそろいました。プログラムを書けば、必ずエラーに出会います。ここでは、よく出る 6 つのエラーを**わざと起こして**、読み方を覚えます。どれも、本物の Python が出した表示です。
 
 エラーを読むときの基本は、**最後の行から読む**ことです。最後の行に、エラーの種類と理由が書かれています。その前の行には、どのファイルの何行目で起きたかが書かれています。
 
@@ -639,7 +652,7 @@ print(f"合計: {total}円")
 - 文字列は引用符で囲む。`+` でつなぎ、`f"..."` で値を埋め込み、`len` で長さを数える。
 - 型は `int` `float` `str`。`type` で調べ、`int()` `str()` `float()` で変換する。`input` は必ず文字列を返す。
 - `#` から後ろはコメント。
-- エラーは最後の行から読む。`SyntaxError` `NameError` `TypeError` `ValueError` `IndentationError` は、ここで見たとおりの形で出る。
+- エラーは最後の行から読む。`SyntaxError` `NameError` `TypeError` `ValueError` `ZeroDivisionError` `IndentationError` は、ここで見たとおりの形で出る。
 
 ## 練習問題
 
@@ -722,7 +735,7 @@ print(price)
     34
     ```
 
-問6. 税抜きの値段を `input` で受け取り、10% の消費税を足した税込みの金額を表示するプログラムを書いてください。小数は使いません。
+問6. 税抜きの値段を `input` で受け取り、10% の消費税を足した税込みの金額を表示するプログラムを書いてください。小数は使いません。新しい `.py` ファイル (たとえば `ex6_input.py`) に書き、`docker run` に `-it` を付けて動かします。
 
 ??? note "解答例"
     `input` は文字列を返すので `int` で変換します。税は整数のまま `price * 10 // 100` で出します。
@@ -749,7 +762,7 @@ print(1200 / people)
 ## 参考文献
 
 - Python 公式チュートリアル「An Informal Introduction to Python」(数・文字列・コメント) <https://docs.python.org/3/tutorial/introduction.html>
-- Python 公式チュートリアル「Floating-Point Arithmetic: Issues and Limitations」(0.1 + 0.2 の誤差) <https://docs.python.org/3/tutorial/floatingpoint.html>
+- Python 公式チュートリアル「Floating-Point Arithmetic: Issues and Limitations」(小数の誤差の仕組み) <https://docs.python.org/3/tutorial/floatingpoint.html>
 - Python 公式チュートリアル「Input and Output」(f-string) <https://docs.python.org/3/tutorial/inputoutput.html>
 - Python 公式チュートリアル「Errors and Exceptions」(エラーの種類) <https://docs.python.org/3/tutorial/errors.html>
 - Python 標準ライブラリ「Built-in Functions」(`print` `input` `type` `len` `int` `float` `str`) <https://docs.python.org/3/library/functions.html>

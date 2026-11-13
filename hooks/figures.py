@@ -12,7 +12,8 @@ def run_figures(root: Path) -> list[Path]:
     """root/examples/figures/*.py を名前順に実行し、実行したスクリプトを返します。失敗したら例外にします。"""
     out = root / "book" / "assets" / "figures"
     out.mkdir(parents=True, exist_ok=True)
-    scripts = sorted((root / "examples" / "figures").glob("*.py"))
+    # 先頭が _ のファイルは共通部品（_style.py など）なので実行しません。
+    scripts = sorted(p for p in (root / "examples" / "figures").glob("*.py") if not p.name.startswith("_"))
     for script in scripts:
         subprocess.run([sys.executable, str(script)], cwd=root, check=True)
     return scripts

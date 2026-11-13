@@ -31,6 +31,7 @@
 ## 図
 
 - 図は手で描かず、コードから作ります。`examples/figures/*.py` を置くと、`mkdocs build` の前に全部実行されます。各スクリプトは SVG を `book/assets/figures/` に書きます（git には入れません）。
+- 図のスクリプトは `from _style import use_japanese_font` で日本語フォントを設定し、ラベルは日本語で書きます（`hooks/figures.py` が `python examples/figures/名前.py` で実行するため、スクリプトのあるフォルダが import パスに入り、`_` で始まるファイルは実行されません）。
 - 本文からは `![説明](../assets/figures/名前.svg)` で参照します。仕組みの流れ図は ```` ```mermaid ```` でも構いません。
 - 数値を本文に手で写さないでください。揺れるためです。
 

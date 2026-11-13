@@ -4,13 +4,13 @@
 
 - cron だけでは足りなくなる場面を、具体的に挙げられる。
 - 処理の依存を DAG（輪を持たない有向グラフ）で表し、失敗したときに何が動き、何が止まるかを説明できる。
-- 日付を引数に取り、何度実行しても同じ結果になる（冪等な）日次ジョブを書ける。
+- 日付を引数に取り、何度実行しても同じ結果になる（冪等な）日次ジョブを書ける。ファイルにも、データベースにも。
 - バックフィル（過去の期間を作り直すこと）を、安全に実行できる。
 - リトライ・タイムアウト・SLA の役割を区別し、センサーでデータの到着を待てる。
-- Airflow の DAG（TaskFlow API）を読み書きし、XCom に大きなデータを渡してはいけない理由を説明できる。
+- Airflow 3 の DAG（TaskFlow API）を読み書きし、データの区間と、XCom に大きなデータを渡してはいけない理由を説明できる。
 - Dagster・Prefect の考え方が Airflow とどう違うかを説明できる。
 
-第3章で cron を使い、第4章で再試行を書き、第9章で取り込みを冪等にしました。この章は、それらの部品を束ねて、毎日安定して動かし続ける仕組みの話です。コードは `examples/b12/` にあります。リポジトリの直下で動かします。Airflow そのものは手元で動かさなくても、ジョブの本体は pytest で確かめられる形に分けてあります。
+第3章で cron を使い、第4章で再試行を書き、第9章で取り込みを冪等にしました。この章は、それらの部品を束ねて、毎日安定して動かし続ける仕組みの話です。コードは `examples/b12/` にあり、リポジトリの直下で動かします（出力は `work/` に作られます）。Airflow は、この本を書いた時点（2026年11月）の最新の 3 系（3.4.0）で動かして確かめました。ジョブの本体は Airflow を使わずに pytest で確かめられる形に分けてあります。
 
 ## なぜ cron だけでは足りないか
 
@@ -23,7 +23,7 @@
 5. **データを待てない。** 元のデータが遅れた日に、空のまま処理が走ります。
 6. **状況が見えない。** どのジョブがいつ動き、何分かかり、どこで止まっているかの一覧がありません。
 
-Reis と Housley の *Fundamentals of Data Engineering* は、cron のような単純なスケジューラは時刻しか知らないのに対し、オーケストレーションの仕組みはジョブの依存関係を、DAG の形で持つと説明しています。さらに、実行履歴・可視化・アラート・バックフィルも備えます。この章のオーケストレーションは、この全体を指します。
+Reis と Housley の *Fundamentals of Data Engineering* は、cron のような単純なスケジューラは時刻しか知らないのに対し、オーケストレーションの仕組みは依存関係を DAG の形で持ち、実行履歴・アラート・バックフィルも備えると説明しています。
 
 ## DAG と、タスクの依存と順序
 
@@ -37,8 +37,11 @@ def run(tasks: dict[str, Callable[[], None]], deps: dict[str, set[str]]) -> dict
 
     状態は success / failed / upstream_failed のどれかです。
     先のタスクが成功していなければ動かさず（upstream_failed）、関係のない枝は動かし続けます。
-    輪になった依存（A→B→A）は graphlib.CycleError になります。
+    輪になった依存（A→B→A）は graphlib.CycleError、tasks にない名前が deps にあれば ValueError です。
     """
+    unknown = (set(deps) | {d for ds in deps.values() for d in ds}) - set(tasks)
+    if unknown:  # 名前の書き間違いは、動かす前に分かるようにする
+        raise ValueError(f"tasks にない名前が deps にあります: {sorted(unknown)}")
     graph = {name: deps.get(name, set()) for name in tasks}
     state: dict[str, str] = {}
     for name in TopologicalSorter(graph).static_order():
@@ -54,7 +57,7 @@ def run(tasks: dict[str, Callable[[], None]], deps: dict[str, set[str]]) -> dict
     return state
 ```
 
-`TopologicalSorter` は、依存を満たす順にタスクを並べます（トポロジカルソート）。実行するとき、`quality_check` に失敗する例が入っています。
+`TopologicalSorter` は、依存を満たす順にタスクを並べます（トポロジカルソート）。`tasks` に無い名前が `deps` にあると、動かす前に `ValueError` にします（名前の書き間違いに早く気づくためです）。実行するとき、`quality_check` に失敗する例が入っています。
 
 ```bash
 python examples/b12/mini_runner.py
@@ -70,31 +73,35 @@ notify        success
 publish       upstream_failed
 ```
 
-`publish`（公開）は、`aggregate` と `quality_check` の両方が成功してから動く、と宣言してあります。品質チェックが失敗したので、公開は動きません（`upstream_failed`）。一方、`aggregate` だけに依存する `notify` は、関係がないので動きます。「壊れたデータを公開しない」を、実行器が順序で守ってくれます。cron の時刻ずらしでは、これができません。依存を輪にすると `CycleError` になることも、テストで確かめています（練習問題 3）。
+`publish`（公開）は、`aggregate` と `quality_check` の両方が成功してから動く、と宣言してあります。品質チェックが失敗したので、公開は動きません（`upstream_failed`）。一方、`aggregate` だけに依存する `notify` は、関係がないので動きます。「壊れたデータを公開しない」を、実行器が順序で守ってくれます。cron の時刻ずらしでは、これができません。依存を輪にすると `CycleError` になることも、テストで確かめています。
 
 ## 冪等性と論理日付
 
-日次ジョブでいちばん大事な決まりは、**日付を引数で受け取る**ことです。`datetime.now()` で「今日」を決めると、再実行したとき（たとえば 2 日後の復旧作業）に、別の日の結果ができてしまいます。処理する日を外から渡せば、「3 月 5 日の分」を、いつ実行しても同じ意味で作れます。この、実行した時刻ではなく処理の対象になる区間の日付を、**論理日付**（logical date）と呼びます。
+日次ジョブでいちばん大事な決まりは、**日付を引数で受け取る**ことです。`datetime.now()` で「今日」を決めると、再実行したとき（たとえば 2 日後の復旧作業）に、別の日の結果ができてしまいます。処理する日を外から渡せば、「3 月 5 日の分」を、いつ実行しても同じ意味で作れます。この、実行した時刻ではなく、処理の対象になる日を、**論理日付**と呼ぶことがあります。ただし Airflow では、同じ言葉が別の意味を持つので、後の節で整理します。
 
-もう 1 つの決まりは、**その日の結果を置き換える**ことです。追記すると、再実行のたびにデータが重なります。第4章で、再試行の前提は冪等（何度繰り返しても結果が変わらない）ことだと学びました。日次ジョブも同じで、冪等であれば、失敗したら安心して流し直せます。次が、その日の売上をカテゴリ別に集計するジョブの本体です。
+もう 1 つの決まりは、**その日の結果を置き換える**ことです。追記すると、再実行のたびにデータが重なります。第4章で、再試行の前提は冪等（何度繰り返しても結果が変わらない）ことだと学びました。日次ジョブも同じで、冪等であれば、失敗したら安心して流し直せます。次が、その日の売上をカテゴリ別に集計するジョブの本体です。入力は、日付ごとのフォルダ（`work/source/date=2026-03-05/sales.csv`）で、送る側が書き終えると最後に `_SUCCESS` という空のファイルを置きます。
 
 ```python
-def process(day: str, source: Path, out_dir: Path) -> int:
+def process(day: str, source_root: Path, out_dir: Path) -> int:
     """day の売上をカテゴリ別に集計し、その日のファイルを丸ごと置き換えます。書いた行数を返します。
 
     追記はしません。書き出しは一時ファイルに行い、最後に os.replace で入れ替えるので、
     途中で失敗しても前回のファイルは壊れず、書きかけが公開されることもありません。
     """
     day = check_day(day)
+    if not source_ready(day, source_root):
+        raise FileNotFoundError(f"{day} の元データがまだ届いていません（_SUCCESS がありません）")
+    # read_csv は DuckDB の関数で、CSV を表として読みます（PostgreSQL にはありません）。
+    # 注文のない日は見出しだけの CSV なので、型を指定して数値の列を数値として読みます。
     rows = duckdb.connect().execute(
         """
         SELECT CAST(? AS DATE) AS date, category, count(DISTINCT order_id) AS orders,
                sum(quantity * unit_price) AS revenue
-        FROM read_csv(?)
-        WHERE CAST(ordered_at AS DATE) = CAST(? AS DATE) AND lower(status) <> 'cancelled'
+        FROM read_csv(?, types = {'quantity': 'INTEGER', 'unit_price': 'INTEGER'})
+        WHERE lower(COALESCE(status, '')) <> 'cancelled'
         GROUP BY category
         ORDER BY category
-        """, [day, str(source), day]).fetchall()
+        """, [day, str(source_root / f"date={day}" / "sales.csv")]).fetchall()
 
     target = out_dir / "daily_sales" / f"date={day}.csv"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -112,14 +119,15 @@ def process(day: str, source: Path, out_dir: Path) -> int:
     return len(rows)
 ```
 
-読みどころは 4 つあります。
+読みどころは 5 つあります。
 
-- **日付を検証する。** `check_day` は `2026-03-05` の形だけを受け付けます。`2026-3-5` や空文字は、ファイルを作る前に `ValueError` にします。壊れた日付で、おかしな名前のファイルができるのを防ぎます。
+- **日付を検証する。** `check_day` は `2026-03-05` の形だけを受け付けます。`2026-3-5` や空文字は、ファイルを作る前に `ValueError` にします。
+- **入力が揃っているか確かめる。** `_SUCCESS` が無い日は、書きかけかもしれないので、読まずに `FileNotFoundError` にします。
 - **日付ごとに 1 ファイル。** 出力は `date=2026-03-05.csv` です。第11章のパーティションと同じ形で、その日だけを置き換えられます。
-- **一時ファイルに書き、`os.replace` で入れ替える。** 第3章の「一時ファイルに書いて最後に `mv`」と同じ考え方です。同じフォルダの中でのファイル名の付け替えは、途中の状態が見えない形で行われます（Python の文書では、`os.replace` は成功すれば、置き換え先を入れ替えると説明されています。置き換えが不可分になるかどうかは、OS とファイルシステムによります）。失敗しても、前回のファイルは残ります。
-- **`os.chmod` で権限を戻す。** `mkstemp` が作るファイルは本人しか読めない設定（0600）です。そのまま入れ替えると、読む側のプロセス（別のユーザーで動く BI など）が、ファイルを読めなくなります。テストで 0644 になることを確かめています。
+- **一時ファイルに書き、`os.replace` で入れ替える。** 第3章の「一時ファイルに書いて最後に `mv`」と同じ考え方です。Python の文書では、`os.replace` は成功すれば置き換え先を入れ替えると説明されています（不可分になるかどうかは、OS とファイルシステムによります）。失敗しても前回のファイルは残ります。ただし、プロセスが強制終了（SIGKILL）された場合は、`.tmp` の一時ファイルが残ることがあります。出力を読む側は、`date=*.csv` のような名前で絞って読みます。
+- **`os.chmod` で権限を戻す。** `mkstemp` が作るファイルは本人しか読めない設定（0600）です。そのままでは、読む側のプロセスがファイルを読めません。テストで確かめています。
 
-なお、この例の出力先は CSV のファイルです。データベースへ入れる処理（第9章）では、日付の範囲を一度に消してから入れ直すか、主キーで upsert（あれば更新、なければ追加）して、同じ冪等の性質を保ちます。
+`read_csv` は DuckDB の関数で、CSV を表として読みます（PostgreSQL にはありません）。注文のない日は見出しだけの CSV なので、型を指定して数値の列を数値として読んでいます。`lower(COALESCE(status, ''))` の `COALESCE` は、`status` が空（NULL）の行を、キャンセル扱いで落とさないためです（`NULL <> 'cancelled'` は NULL になり、`WHERE` で落ちてしまいます。第5章）。
 
 入力の CSV を作って、動かします。
 
@@ -128,7 +136,7 @@ python examples/b12/make_source.py
 ```
 
 ```text
-7469 行を work/source/sales.csv に書きました
+7469 行を work/source/ に書きました
 ```
 
 ```bash
@@ -146,18 +154,50 @@ date,category,orders,revenue
 2026-03-05,飲み物,12,119750
 ```
 
-同じ日をもう一度流しても、ファイルの中身は変わりません。テストは 3 つの形で確かめています。同じ日を 3 回流してもバイト列が同じこと、遅れて届いた明細（元データに足した 1 行）が入った後の再実行では行が増えず売上だけが 2,000 円増えること、ほかの日のファイルが変わらないことです。
+同じ日をもう一度流しても、ファイルの中身は変わりません。テストは、3 回流してもバイト列が同じこと、遅れて届いた明細の後の再実行で行が増えず売上だけが増えること、ほかの日が変わらないことを確かめています。
 
-日付の区切りには、タイムゾーンが関わります。この例の元データは、日本時間の日付をそのまま持つ文字列で、`CAST(ordered_at AS DATE)` はその日付で区切ります。実際のデータが UTC で入っているなら、日本の 1 日の区切りは UTC の前日 15 時になるので、区切りの時刻を決めてから集計します（第3章）。
+**悪い例も見ておきます。** 結果を 1 つのファイルに追記するジョブ（`naive_job.py`）を、同じ日に 2 回流します。
+
+```bash
+python examples/b12/naive_job.py 2026-03-05
+python examples/b12/naive_job.py 2026-03-05
+```
+
+```text
+売上の合計: 257,150
+売上の合計: 514,300
+```
+
+2 回目で売上が倍になりました。
+
+**データベースに入れるとき。** 結果を PostgreSQL に入れるなら、同じ日の行を 1 つのトランザクションの中で `DELETE` してから `INSERT` します。途中で失敗すれば、両方が取り消され、前回の行が残ります（`MERGE` や主キーでの upsert も同じ目的に使えます。第9章）。
+
+```python
+def replace_day(con: psycopg.Connection, day: str, csv_path: Path) -> int:
+    """その日の行を消して入れ直します。DELETE と INSERT は 1 つのトランザクションなので、
+    途中で失敗すれば両方が取り消され、前回の行がそのまま残ります。入れた行数を返します。"""
+    with csv_path.open(encoding="utf-8", newline="") as f:
+        rows = [(r["date"], r["category"], int(r["orders"]), int(r["revenue"])) for r in csv.DictReader(f)]
+    with con.transaction():
+        con.execute("DELETE FROM b12.daily_sales WHERE date = %s", [day])
+        with con.cursor() as cur:
+            cur.executemany("INSERT INTO b12.daily_sales (date, category, orders, revenue) VALUES (%s, %s, %s, %s)",
+                            rows)
+    return len(rows)
+```
+
+`python examples/b12/pg_replace.py 2026-03-05` を 2 回流しても、`b12.daily_sales` の行は 5 行のままです（PostgreSQL を起動して `PG_DSN` を設定した状態で。テストで確かめています。同じ主キーの行が 2 つ入った CSV でわざと失敗させると、前回の行が残ります）。
+
+**日付の区切りとタイムゾーン。** この例の元データの日付は、日本時間の日付です。UTC で保存する決まり（第3章）と食い違うように見えますが、ここでの日付は「事業上の日」を表すパーティションのキーで、時刻そのものではありません。実際のデータが UTC の時刻で入っているなら、日本の 1 日は UTC の前日 15 時から始まるので、日付に直す前に区切りの時刻を決めます。
 
 ## バックフィル
 
 **バックフィル**は、過去の区間を作り直すことです。ロジックの間違いを直したとき、元データが後から訂正されたとき、新しい集計を過去にさかのぼって作るときに使います。冪等な日次ジョブなら、バックフィルは「日付を変えて、同じジョブを繰り返す」だけです。
 
 ```python
-def backfill(start: str, end: str, source: Path, out_dir: Path) -> dict[str, int]:
+def backfill(start: str, end: str, source_root: Path, out_dir: Path) -> dict[str, int]:
     """start から end までの各日を process で作り直します。{日付: 行数} を返します。"""
-    return {day: process(day, source, out_dir) for day in days_between(start, end)}
+    return {day: process(day, source_root, out_dir) for day in days_between(start, end)}
 ```
 
 `days_between` は、両端を含む日付の列を昇順で返します（`2026-03-01` と `2026-03-07` なら 7 日分）。終わりが始まりより前だと `ValueError` にします。実行します。
@@ -189,9 +229,11 @@ date=2026-03-07.csv
 バックフィルで気をつけることは、次のとおりです。
 
 - **一部だけやり直しても全体が変わらないこと。** 3 月 3 日から 5 日だけ流し直しても、ほかの日のファイルは同じ中身のままです（テスト済み）。
-- **負荷。** 1 年分を一度に流すと、元のシステムや DWH に大きな負荷をかけます。同時に動かす日数に上限を付けます。Airflow では `max_active_runs` で設定します。
-- **途中で止まったときの再開。** 冪等なので、止まった日から最後までを、もう一度流せば足ります。最初からやり直しても結果は同じですが、時間がかかります。
+- **負荷。** 1 年分を一度に流すと、元のシステムや DWH に大きな負荷をかけます。同時に動かす日数に上限を付けます。
+- **途中で止まったときの再開。** 冪等なので、止まった日から最後までを、もう一度流せば足ります。
 - **集計の依存。** 日次の結果を使う月次の集計があるなら、日次をすべて直してから月次を流します。DAG の依存で順序を守ります。
+
+Airflow では、過去の期間の作り直しに 2 つの方法があります。1 つは**バックフィル**の機能で、3 系では `airflow backfill create --dag-id ... --from-date ... --to-date ...` のコマンド（や画面）を使います（2 系の `airflow dags backfill` は 3 系で廃止されました）。`--max-active-runs` で同時に動かす数を、`--reprocess-behavior` で、まだ無い実行だけ作るか、失敗したものも、完了したものも作り直すかを選びます。もう 1 つは、既に動いた DAG Run やタスクを画面やコマンドで**クリア**して、もう一度動かす方法です。少数の日を直すだけなら、クリアのほうが手軽です。どちらも、タスクが冪等だからこそ、安心して使えます。
 
 ## リトライ・タイムアウト・SLA
 
@@ -199,28 +241,29 @@ date=2026-03-07.csv
 
 - **リトライ**は、失敗した処理を、時間を置いて自動でやり直すことです。一時的な失敗（ネットワークの切断、混雑）に効きます。何を再試行してよいか、待ち時間をどう延ばすかは第4章で学びました。冪等でない処理を再試行すると、データが重なります。
 - **タイムアウト**は、処理の上限時間です。無限に待ち続けて、後ろのジョブをすべて止める事態を防ぎます。上限は、通常の実行時間より少し長めに決めます。
-- **SLA**（サービス水準）は、「毎朝 9 時までにデータが揃っている」のような、利用者への約束です。タスクが失敗したかどうかではなく、約束の時刻に間に合ったかどうかを見ます。遅れたら通知します。Airflow 2.10 の DAG には SLA を指定する機能がありますが、版によって仕組みが変わるので、使う版の文書を確かめてください。
+- **SLA**（サービス水準）は、「毎朝 9 時までにデータが揃っている」のような、利用者への約束です。タスクが失敗したかどうかではなく、約束の時刻に間に合ったかどうかを見ます。遅れたら通知します。Airflow 2 では、タスクごとに `sla`（`timedelta`）を指定し、DAG の `sla_miss_callback` で通知する機能がありましたが、3 系では削除されました。代わりに、3 系の新しい機能である Deadline Alerts（期限を過ぎたら通知する仕組み）を使います。まだ新しい機能なので、使う版の文書で書き方と制限を確かめてください。
 
-3 つは組み合わせて使います。たとえば、「30 分でタイムアウトし、5 分おいて 2 回まで再試行し、それでも 9 時に間に合わなければ通知する」という具合です。再試行の回数を増やしすぎると、復旧の遅れが目立たなくなります。失敗した回数は、再試行で直ったものも含めてログに残し、増えていないかを見ます。
+3 つは組み合わせて使います。たとえば、「30 分でタイムアウトし、5 分おいて 2 回まで再試行し、それでも 9 時に間に合わなければ通知する」という具合です。再試行を増やしすぎると、復旧の遅れが目立たなくなるので、再試行で直った回数もログに残して見ます。
 
 ## センサーとイベント起動: データの到着を待つ
 
-時刻で動かすジョブは、元データがその時刻に揃っている、という前提で動きます。元データの出力が遅れた日に、空のデータから結果を作って「成功」にすると、気づかれない欠損になります。これを防ぐのが**センサー**です。センサーは、条件が整うまで待つタスクです。条件は、ファイルが届いたこと、テーブルに今日の行があること、などです。この章の `source_has_day` は、元の CSV があり、その日の明細が 1 行以上あれば True を返します。
+時刻で動かすジョブは、元データがその時刻に揃っている、という前提で動きます。元データの出力が遅れた日に、空のデータから結果を作って「成功」にすると、気づかれない欠損になります。これを防ぐのが**センサー**です。センサーは、条件が整うまで待つタスクです。
+
+「その日のデータが 1 行でもあれば届いたとみなす」のは危険です。ファイルが書きかけで、半分しか入っていない状態でも、1 行はあるからです。送る側が、書き終えたあとに**完了の印**（この章では空の `_SUCCESS` ファイル）を置き、受ける側はその印を待ちます。
 
 ```python
-def source_has_day(day: str, source: Path) -> bool:
-    """元の CSV があり、その日の明細が 1 行以上あれば True（データが届いた目印）。"""
-    if not source.exists():
-        return False
-    count = duckdb.connect().execute(
-        "SELECT count(*) FROM read_csv(?) WHERE CAST(ordered_at AS DATE) = CAST(? AS DATE)",
-        [str(source), check_day(day)]).fetchone()[0]
-    return count > 0
+def source_ready(day: str, source_root: Path) -> bool:
+    """その日のフォルダに、完了の印（_SUCCESS）があれば True。
+
+    ファイルがあるだけでは、書きかけかもしれません。送る側が書き終えたあとに置く印を見て、
+    半分しか入っていないデータを読まないようにします。
+    """
+    return (source_root / f"date={check_day(day)}" / "_SUCCESS").exists()
 ```
 
-待ち方には 2 種類あります。ずっとワーカー（タスクを実行する枠）を占めたまま、一定間隔で調べ続ける poke と、調べるたびにいったん枠を空け、次の時刻にもう一度取り直す reschedule です。待ちが長くなるなら reschedule です。待つ時間には上限（タイムアウト）を付けます。上限を越えたらタスクは失敗し、通知が飛びます。「待ちっぱなしで誰も気づかない」を防ぐためです。
+待ち方には 2 種類あります。ずっとワーカー（タスクを実行する枠）を占めたまま、一定間隔で調べ続ける poke と、調べるたびにいったん枠を空け、次の時刻にもう一度取り直す reschedule です。待ちが長くなるなら reschedule です。待つ時間には上限（タイムアウト）を付けます。上限を越えたらタスクは失敗し、通知が飛びます。「待ちっぱなしで誰も気づかない」を防ぐためです。さらに、多くのセンサーには、待つ処理を専用の軽いプロセス（トリガー）に任せる deferrable（遅延可能）という方式があり、待っている間にワーカーを一切使いません。待ちが長い、待つ対象が多い、という場面で検討します。
 
-もう 1 つの方法は、時刻ではなくイベントで動かすことです。上流のジョブが終わったら、下流を起動します。Airflow 2.10 には、データセットの更新を起点に DAG を動かす仕組み（Dataset。3 系では呼び名が変わる場合があります）があります。時刻だけで動かすより、依存が分かりやすくなります。ただし、イベントの取りこぼしに備えて、時刻での実行も併用することが多くあります。
+もう 1 つの方法は、時刻ではなくイベントで動かすことです。上流のジョブが終わったら、下流を起動します。Airflow 3 では、データの更新を起点に DAG を動かす仕組みを `Asset`（2 系では `Dataset`）と呼びます。Dagster のアセットに近い考え方です。時刻だけで動かすより、依存が分かりやすくなります。ただし、イベントの取りこぼしに備えて、時刻での実行も併用することが多くあります。
 
 ## Airflow の基本
 
@@ -228,7 +271,9 @@ Airflow は、Apache のオーケストレーターで、DAG を Python のフ�
 
 {{ table("b12-airflow-terms") }}
 
-この章の DAG ファイル（`examples/b12/neboske_daily_sales.py`）を、上から読みます。まず、準備とタスクです。
+表の **Operator** は、タスクの型です。「ファイルを待つ」「SQL を流す」「Python の関数を動かす」といった、やることごとに用意された部品で、DAG の中のタスクは、どれかの Operator のインスタンスです。この章で使う TaskFlow API は、普通の Python の関数に `@task` を付けると、関数を動かす Operator が自動で作られる書き方です。
+
+この章の DAG ファイル（`examples/b12/neboske_daily_sales.py`）を、上から読みます。まず、準備です。
 
 ```python
 """ねぼすけ商店の日次売上を作る DAG（第 12 章）。処理の本体は daily_job.py にあります。"""
@@ -237,33 +282,57 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-from airflow.decorators import dag, task
+from airflow.sdk import dag, task
+from airflow.timetables.interval import CronDataIntervalTimetable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import daily_job  # noqa: E402
 
 WORK = Path(os.environ.get("NEBOSKE_WORK", "/tmp/neboske"))
-SOURCE = WORK / "source" / "sales.csv"
+SOURCE = WORK / "source"
 OUT = WORK / "out"
+TZ = "Asia/Tokyo"  # 日付の区切りに使うタイムゾーン（元データの日付は日本時間）
+```
+
+`from airflow.sdk import dag, task` は 3 系の書き方です（2 系では `airflow.decorators` からでした）。日付の区切りに使うタイムゾーン `TZ` を、1 か所にまとめます。次に、補助の関数です。
+
+```python
+def day_of(data_interval_start: datetime) -> str:
+    """処理する日（区間の始まりの日付）を '2026-03-05' の形にする。
+
+    data_interval_start は UTC で渡ってくるので、スケジュールと同じタイムゾーンに直してから日付にする。
+    """
+    return data_interval_start.astimezone(ZoneInfo(TZ)).strftime("%Y-%m-%d")
 
 
 def notify_failure(context) -> None:
     """失敗を通知する場所。ここではログに書くだけです（実際はチャットやメールに送ります）。"""
     ti = context["task_instance"]
-    logging.getLogger(__name__).error("失敗: %s / %s (論理日付 %s)", ti.dag_id, ti.task_id, context["ds"])
+    logging.getLogger(__name__).error("失敗: %s / %s", ti.dag_id, ti.task_id)
+```
 
+`day_of` は、実行の「データの区間」の始まりから、処理する日を作ります。ここが 3 系を使うときのいちばんの注意点なので、少し丁寧に説明します。
 
+**データの区間と、論理日付。** Airflow 3 では、日次の DAG の「いつ」を決める方法（スケジュールのタイムテーブル）が 2 つあります。`"0 0 * * *"` のような cron 式を文字列で渡すと、3 系の既定では `CronTriggerTimetable` になります。これは「その時刻に起動する」だけで、`logical_date`（実行を区別する日時）は起動時刻、データの区間の幅は 0 です。「昨日の分を処理する」という意図は、タスク側で自分で計算することになります。この章は、もう一方の `CronDataIntervalTimetable("0 0 * * *", timezone=TZ)` を使います。毎日 0 時（日本時間）を境にした区間を持ち、区間が終わったあとに実行が作られます。3 月 4 日の実行は、`data_interval_start` が 3 月 4 日 0 時、`data_interval_end` が 3 月 5 日 0 時（どちらも日本時間）で、3 月 5 日の 0 時過ぎに動きます。タスクは、`data_interval_start` を受け取って、処理する日を決めます。受け取る値は UTC なので、`TZ` に直してから日付にします。
+
+手動で実行したとき（画面や `airflow dags test`）は、区間は「実行を指定した日時の直前の区間」になります。この章の DAG を `airflow dags test neboske_daily_sales 2026-03-05` で動かしたところ、処理されたのは 3 月 5 日ではなく **3 月 4 日**の分でした（Airflow 3.4.0 で確かめました）。引数の `2026-03-05` は論理日付（UTC の 3 月 5 日 0 時）で、その直前の日本時間の区間が 3 月 4 日だからです。「手動で指定した日の分が動く」と思い込むと、1 日ずれます。手動で動かしたあとは、どの日が処理されたかをログで確かめます。
+
+次が、タスクです。
+
+```python
 @task.sensor(poke_interval=300, timeout=6 * 60 * 60, mode="reschedule")
-def wait_for_source(ds=None) -> bool:
-    """その日の元データが届くまで待つ。待っている間はワーカーを空けておく（reschedule）。"""
-    return daily_job.source_has_day(ds, SOURCE)
+def wait_for_source(data_interval_start=None) -> bool:
+    """その日の元データの完了の印（_SUCCESS）が届くまで待つ。待っている間はワーカーを空けておく（reschedule）。"""
+    return daily_job.source_ready(day_of(data_interval_start), SOURCE)
 
 
 @task
-def build(ds=None) -> dict:
+def build(data_interval_start=None) -> dict:
     """その日の分だけを作り直す。同じ日を再実行しても、結果は変わらない。"""
-    return {"day": ds, "rows": daily_job.process(ds, SOURCE, OUT)}
+    day = day_of(data_interval_start)
+    return {"day": day, "rows": daily_job.process(day, SOURCE, OUT)}
 
 
 @task
@@ -272,14 +341,14 @@ def report(result: dict) -> None:
     logging.getLogger(__name__).info("%s: %d 行を書きました", result["day"], result["rows"])
 ```
 
-これは **TaskFlow API** です。普通の Python の関数に `@task` を付けると、それが 1 つのタスクになります。関数の引数 `ds` には、実行の論理日付が `2026-03-05` の形で入ります。DAG の中身は、ジョブ本体（`daily_job.process`）を呼ぶだけです。本体は Airflow を知らないので、Airflow なしで pytest にかけられます。処理を DAG ファイルに直接書き込むと、テストのたびに Airflow が要ります。
+これは **TaskFlow API** です。普通の Python の関数に `@task` を付けると、それが 1 つのタスクになります。`@task.sensor` は、関数が True を返すまで待つセンサーです。DAG の中身は、ジョブ本体（`daily_job`）を呼ぶだけです。本体は Airflow を知らないので、Airflow なしで pytest にかけられます。処理を DAG ファイルに直接書き込むと、テストのたびに Airflow が要ります。
 
 `build` は小さな dict（日付と行数）を return し、`report` が受け取ります。この受け渡しが **XCom** です。XCom は、既定では Airflow のデータベースに値を保存します。Airflow の文書は、小さなデータ向けで、データフレームのような大きな値を渡さないよう書いています。大きなデータは、ファイルやテーブルに書いて、その場所（パスやテーブル名）だけを渡します。この例では、結果のファイルはすでに `OUT` の下にあり、XCom には件数だけを渡しています。次が DAG の定義です。
 
 ```python
 @dag(
     dag_id="neboske_daily_sales",
-    schedule="@daily",
+    schedule=CronDataIntervalTimetable("0 0 * * *", timezone=TZ),
     start_date=datetime(2026, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -303,18 +372,22 @@ neboske_daily_sales()
 
 設定の意味は、次のとおりです。
 
-- **`schedule="@daily"`**: 毎日 1 回、DAG Run（1 回分の実行）を作ります。日次の DAG Run は、対象の日（論理日付）が終わったあとに始まります。3 月 5 日の DAG Run は、3 月 6 日の 0 時（UTC）以降に動き、`ds` は `2026-03-05` です。「5 日に動くのに、5 日のデータ」ではなく、「5 日が終わってから、5 日のデータを処理する」と覚えます。
-- **`start_date`**: スケジュールの始まりです。タイムゾーンを付けないと UTC として扱われます。日本の 1 日で区切りたいときは、タイムゾーン付きの開始日時を指定します。書き方は使う版の文書を確かめてください。
-- **`catchup=False`**: 有効にしたときに、`start_date` から今までの取りこぼしの区間を、まとめて作らない設定です。True にすると、過去の何百日分もの DAG Run が一度に動き出すことがあります。過去分は、意図して、バックフィルとして流します。
-- **`max_active_runs=1`**: 同じ DAG の DAG Run を、同時に 1 つまでにします。cron の `flock`（第3章）と同じ、重なり実行の防止です。
+- **`schedule`**: 上で説明した、区間のあるタイムテーブルです。
+- **`start_date`**: スケジュールの始まりです。
+- **`catchup=False`**: 有効にしたときに、`start_date` から今までの取りこぼしの区間を、まとめて作らない設定です。2 系の既定は True でしたが、3 系の既定は False です。True にすると、過去の何百日分もの実行が一度に動き出すことがあります。過去分は、意図して、バックフィルとして流します。
+- **`max_active_runs=1`**: 同じ DAG の実行を、同時に 1 つまでにします。cron の `flock`（第3章）と同じ、重なり実行の防止です。
 - **`retries` と `execution_timeout`**: 前の節の再試行とタイムアウトです。`on_failure_callback` は、失敗したときに呼ばれる関数で、ここに通知を書きます。
 - **`ready >> result`**: `wait_for_source` が成功してから、`build` を動かす、という依存です。`report(result)` は `build` の結果を受け取るので、`build` のあとに動きます。
 
-読み込みの確認は、CI の DagBag（Airflow が DAG ファイルを読み込む仕組み）で行います。本書のテストは、Airflow の部分だけを素通しにして、ファイルの文法、設定の値、タスクの中身を確かめます。手元に Airflow を入れて 1 回動かすなら、次のようにします（Linux・WSL・macOS 向けで、本書のテストでは実行していません）。
+実行条件を細かく決める設定も、短く挙げておきます。`trigger_rule` は、上流の状態に応じてタスクを動かすかの規則で、既定は「上流がすべて成功」です（`all_done` にすると、失敗しても動き、後片付けのタスクに使います）。`depends_on_past` は、前の日の同じタスクが成功していないと動かさない設定です（日が前の結果に依存するときに使います。1 日の失敗が連鎖して止まるので注意します）。`pool` は、同時に動かすタスクの数に上限を付ける枠で、外部のシステムへの同時接続数を絞りたいときに使います。
+
+接続情報やパスワードは、DAG ファイルに書きません。Airflow には、接続情報を保存する **Connection** と、設定値を保存する **Variable** があり、秘密は専用の保管サービス（シークレットバックエンド）にも置けます。本番の Airflow は、自分でサーバを立てて運用する方法のほか、マネージドサービス（AWS の MWAA、Google Cloud の Cloud Composer など）を使う方法があります。運用の手間を減らせる代わりに、使える Airflow の版や設定に制限があります。
+
+`airflow dags test` は、スケジューラを起動せずに、DAG の 1 回分を手元で動かすコマンドです。手元で動かすときの手順は、次のとおりです（Linux・WSL・macOS 向けです）。
 
 ```bash
-pip install "apache-airflow==2.10.5" \
-  --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.5/constraints-3.12.txt"
+pip install "apache-airflow==3.4.0" \
+  --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-3.4.0/constraints-3.12.txt"
 
 export AIRFLOW_HOME="$PWD/work/airflow"
 export AIRFLOW__CORE__DAGS_FOLDER="$PWD/examples/b12"
@@ -322,10 +395,29 @@ export AIRFLOW__CORE__LOAD_EXAMPLES=False
 export NEBOSKE_WORK="$PWD/work"
 
 python examples/b12/make_source.py
+airflow db migrate
 airflow dags test neboske_daily_sales 2026-03-05
 ```
 
-`--constraint` は、Airflow が動作確認した依存ライブラリの版を固定する指定です。Airflow は依存が多いので、公式はこの指定を勧めています。
+`--constraint` は、Airflow が動作確認した依存ライブラリの版を固定する指定で、公式が勧めています。`airflow db migrate` は、メタデータのデータベース（既定は SQLite）を作る手順です。Docker の Python 3.12 イメージで実際に動かしたところ、ログの主な行は次のとおりでした（時刻などは省いています）。
+
+```text
+[DAG TEST] starting task_id=wait_for_source
+[DAG TEST] end task task_id=wait_for_source
+[DAG TEST] starting task_id=build
+[DAG TEST] end task task_id=build
+[DAG TEST] starting task_id=report
+2026-03-04: 5 行を書きました
+[DAG TEST] end task task_id=report
+```
+
+`work/out/daily_sales/date=2026-03-04.csv` ができ、`wait_for_source` → `build` → `report` の順に動いたことが分かります。バックフィルのコマンド（前の節）も同じスクリプトの末尾に書いてありますが、スケジューラが要るので、この本では実行していません。
+
+CI では、DAG ファイルを Airflow に読み込ませて、構造を確かめています（`.github/workflows/pages.yml`）。DAG が 1 つ以上読み込まれていること（読み込み対象から外されていないこと）、タスクが 3 つで `build` の上流が `wait_for_source` であること、`catchup` が False で `retries` が 2 であることです。手元の pytest は、Airflow の部分だけを素通しにして、タスクの中身とファイルの文法・設定を確かめます。
+
+!!! warning "Airflow 2 系との違い"
+    ネットや古い本の記事は、2 系で書かれていることが多くあります。主な違いは次のとおりです。
+    `import` は `airflow.decorators` から `airflow.sdk` へ。`schedule="@daily"` は、3 系の既定では区間を持たず、起動時刻が論理日付になります。`catchup` の既定は True から False へ。`execution_date` など、古い名前の多くは廃止されました。`airflow dags backfill` は、`airflow backfill create` へ。SLA は削除され、Deadline Alerts へ。`Dataset` は `Asset` へ。記事を読むときは、どの版の話かを最初に確かめます。
 
 ## Dagster・Prefect との考え方の違い
 
@@ -335,39 +427,39 @@ Prefect は、Python の関数に `flow` や `task` を付けて、普通のコ�
 
 {{ table("b12-orchestrators") }}
 
-どれを選ぶかは、現場の既存の資産と、チームの慣れで決まります。Airflow は、使っている会社が多く、外部サービスとの連携部品が豊富です。アセット指向は、データの「いつの状態か」を中心に扱いたいときに向きます。考え方が分かっていれば、道具が変わっても、この章の冪等性・バックフィル・センサーはそのまま使えます。製品の機能は更新が早いので、選ぶときは公式の文書で、使う版を確かめてください。
+どれを選ぶかは、現場の既存の資産と、チームの慣れで決まります。Airflow は、連携部品（プロバイダー）が豊富で、運用の情報も多くあります。アセット指向は、データの「いつの状態か」を中心に扱いたいときに向きます。道具が変わっても、この章の冪等性・バックフィル・センサーの考え方はそのまま使えます。機能は更新が早いので、選ぶときは公式の文書で確かめてください。
 
 ## 監視とアラート
 
 オーケストレーターを入れても、見ていなければ意味がありません。何を監視するかは、4 つに分けられます。
 
 - **失敗**: タスクが失敗したか。再試行しても直らなかったか。
-- **遅れ**: 約束の時刻（SLA）に間に合ったか。あるいは、いつもの実行時間より極端に長くないか。
+- **遅れ**: 約束の時刻に間に合ったか（SLA、3 系では Deadline Alerts）。あるいは、いつもの実行時間より極端に長くないか。
 - **中身**: 成功しているが、出力が空、または件数が急に減っていないか。オーケストレーターは「プログラムが正常に終わったか」しか知りません。中身の確認は、データ品質のチェックで行います（第13章）。
 - **ログ**: 失敗の原因を、あとから追えるか。ログには、処理した日付と件数を残します（第4章）。
 
-通知は、人が反応できる形に絞ります。失敗のたびに毎回通知すると、そのうち誰も見なくなります（アラート疲れ）。再試行で直ったものは通知せず、再試行をすべて使い切ったときと、約束の時刻に間に合わなかったときに通知します。通知の文面には、DAG の名前・論理日付・失敗したタスクと、再実行の手順へのリンクを入れます。この章の `notify_failure` は、その入口の例です。夜中に起こされた人が、何をすればよいか分かる通知が、よい通知です。
+通知は、人が反応できる形に絞ります。失敗のたびに毎回通知すると、そのうち誰も見なくなります（アラート疲れ）。再試行で直ったものは通知せず、再試行をすべて使い切ったときと、約束の時刻に間に合わなかったときに通知します。通知の文面には、DAG の名前・処理する日・失敗したタスクと、再実行の手順へのリンクを入れます。この章の `notify_failure` は、その入口の例です。夜中に起こされた人が、何をすればよいか分かる通知が、よい通知です。
 
 ## よくある失敗
 
 - 処理する日を `datetime.now()` で決めて、再実行や過去分のやり直しで、別の日の結果ができる。
 - 結果を追記して、再実行のたびにデータが重なる。
 - 書きかけのファイルを、読む側が見てしまう。一時ファイルに書いて、最後に入れ替える。
-- `catchup=True` のまま有効にして、過去の DAG Run が一斉に動く。
+- 元データの到着を、「1 行でもあれば OK」で判断して、半分しか入っていないデータを読む。
+- `catchup=True` のまま有効にして、過去の実行が一斉に動く。
 - 元データの到着を待たず、空のデータから「成功」の結果を作る。
 - XCom にデータフレームや大きな JSON を渡して、Airflow のデータベースを膨らませる。
-- 再試行の回数だけ増やして、本当の障害が隠れる。
-- 失敗の通知が多すぎて、誰も見なくなる。
 - DAG ファイルに処理を全部書き込み、Airflow なしでテストできなくなる。
+- 2 系の記事の書き方を、そのまま 3 系に貼る。
 
 ## まとめ
 
 - cron は時刻しか知りません。依存・失敗の検知・再試行・過去分の作り直し・待機・履歴が要るようになったら、オーケストレーターの出番です。
 - DAG は、タスクの依存を、輪の無い矢印で表します。上流が失敗すれば、下流は動かず、関係のない枝は動き続けます。
-- 日付を引数に取り、その日の結果を置き換えると、ジョブは冪等になります。再実行とバックフィルが安全になります。
+- 日付を引数に取り、その日の結果を置き換えると、ジョブは冪等になります。データベースでは、1 つのトランザクションで削除して入れ直します。
 - リトライは一時的な失敗、タイムアウトは待ちすぎ、SLA は利用者への約束に対応します。
-- センサーで、データの到着を待ちます。待ちには上限を付けます。
-- Airflow では、DAG ファイルは薄くし、本体を別ファイルに置いてテストします。XCom には小さな値だけを渡します。
+- センサーで、データの到着を、完了の印で待ちます。待ちには上限を付けます。
+- Airflow 3 では、処理する日を、データの区間（`data_interval_start`）から決めます。手動実行では、指定した日の直前の区間が動く点に注意します。DAG ファイルは薄くし、XCom には小さな値だけを渡します。
 - Dagster は「データ（アセット）」、Prefect は「Python の関数」を中心に考えます。冪等性などの原則は、どの道具でも同じです。
 - 監視は、失敗・遅れ・中身・ログの 4 つです。通知は人が反応できる数に絞ります。
 
@@ -389,24 +481,30 @@ Prefect は、Python の関数に `flow` や `task` を付けて、普通のコ�
 ??? note "解答例"
     3 時 30 分の集計は、取り込みの途中の（未完成の）データを読んで動き、欠けた集計を作ります。cron は、取り込みが終わったかどうかを知りません。オーケストレーターでは、集計のタスクが取り込みのタスクに依存すると宣言します。取り込みが終わるまで集計は動かず、取り込みが失敗したら、集計は動かずに失敗が通知されます。時刻は、DAG 全体の開始の目安にすぎません。
 
-問 3. `mini_runner.run` に、`{"a": lambda: None, "b": lambda: None}` と、`a` が `b` に、`b` が `a` に依存する依存関係を渡すと、どうなりますか。
+問 3. `mini_runner.run` の `deps` に、`tasks` にない名前（たとえば `{"a": {"typo"}}`）を書くとどうなりますか。なぜ、動かす前に分かるほうがよいのですか。
 
 ??? note "解答例"
-    `graphlib.CycleError` になり、どのタスクも動きません。`a` が先に必要なのに、その `a` が `b` を待っている、という輪になっていて、順序が決められないからです。DAG の「非巡回」の意味はこれで、`test_runner_rejects_cycles` が確かめています。Airflow でも、輪のある DAG は読み込みの段階でエラーになります。
+    `ValueError` になり、どのタスクも動きません（`test_runner_rejects_unknown_names` が確かめています）。名前の書き間違いのまま動かすと、依存が効かず、本来は待つはずのタスクが先に動いてしまいます。実行の途中で分かる失敗より、動かす前に分かる失敗のほうが、被害が小さくて済みます。なお、輪になった依存は `graphlib.CycleError` になります。
 
 問 4. `quality_check` が失敗した日でも、`publish` を動かしたいという要望がありました。依存はどう変えられますか。そうすべきでしょうか。
 
 ??? note "解答例"
-    `publish` の依存から `quality_check` を外せば（`deps["publish"] = {"aggregate"}`）、品質チェックの結果に関係なく動きます。Airflow では、上流が失敗しても動かす設定（トリガールール）がありますが、ここは勧めません。品質チェックの目的は、壊れたデータを公開しないことで、それを外すと目的が失われます。公開を止めて通知し、直してから再実行するのが基本です。どうしても見せる必要があるなら、「品質未確認」と分かる形で別の場所に出す、といった設計にします。
+    `publish` の依存から `quality_check` を外せば（`deps["publish"] = {"aggregate"}`）、品質チェックの結果に関係なく動きます。Airflow では、上流が失敗しても動かす設定（`trigger_rule`）がありますが、ここは勧めません。品質チェックの目的は、壊れたデータを公開しないことで、それを外すと目的が失われます。公開を止めて通知し、直してから再実行するのが基本です。どうしても見せる必要があるなら、「品質未確認」と分かる形で別の場所に出す、といった設計にします。
+
+問 5. `naive_job.py`（追記するジョブ）を同じ日に 2 回流すと、売上の合計が 2 倍になりました。`daily_job.py` はなぜ 2 倍にならないのですか。再試行が付いたジョブに、追記が危険なのはなぜですか。
+
+??? note "解答例"
+    `daily_job.py` は、その日のファイルを丸ごと置き換えます（`os.replace`）。何回流しても、最後に書いた 1 つの結果が残るだけです。追記のジョブは、流した回数だけ行が増えます（257,150 が 514,300 になる）。再試行は、失敗したように見えても、実は途中まで書けていた処理を、もう一度流すことがあります。そのとき追記だと、同じ日の行が重なります。再試行を付ける前に、冪等にしておくことが先です。
 
 ## 参考文献
 
 - Joe Reis, Matt Housley, *Fundamentals of Data Engineering*, O'Reilly, 2022. 第2章 “Orchestration”（スケジューラとオーケストレーションの違い、DAG、バックフィル、アラート）。
-- Apache Airflow 2.10.5 Documentation, “DAGs”, <https://airflow.apache.org/docs/apache-airflow/2.10.5/core-concepts/dags.html> ／ “Tasks”（再試行・タイムアウト・SLA）, <https://airflow.apache.org/docs/apache-airflow/2.10.5/core-concepts/tasks.html> ／ “DAG Runs”（論理日付・catchup・バックフィル）, <https://airflow.apache.org/docs/apache-airflow/2.10.5/core-concepts/dag-run.html>
-- Apache Airflow 2.10.5 Documentation, “Tutorial: Pythonic DAGs with the TaskFlow API”, <https://airflow.apache.org/docs/apache-airflow/2.10.5/tutorial/taskflow.html> ／ “XComs”, <https://airflow.apache.org/docs/apache-airflow/2.10.5/core-concepts/xcoms.html> ／ “Sensors”, <https://airflow.apache.org/docs/apache-airflow/2.10.5/core-concepts/sensors.html> ／ “Data-aware scheduling (Datasets)”, <https://airflow.apache.org/docs/apache-airflow/2.10.5/authoring-and-scheduling/datasets.html> ／ “Best Practices”, <https://airflow.apache.org/docs/apache-airflow/2.10.5/best-practices.html> ／ “Callbacks”, <https://airflow.apache.org/docs/apache-airflow/2.10.5/administration-and-deployment/logging-monitoring/callbacks.html>
+- Apache Airflow 3.4.0 Documentation, “Dags”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/core-concepts/dags.html> ／ “Dag Runs”（データの区間・論理日付）, <https://airflow.apache.org/docs/apache-airflow/3.4.0/core-concepts/dag-run.html> ／ “Timetables”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/authoring-and-scheduling/timetable.html> ／ “Backfill”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/core-concepts/backfill.html>
+- Apache Airflow 3.4.0 Documentation, “Working with TaskFlow”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/tutorial/taskflow.html> ／ “XComs”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/core-concepts/xcoms.html> ／ “Sensors”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/core-concepts/sensors.html> ／ “Deferring”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/authoring-and-scheduling/deferring.html> ／ “Asset-Aware Scheduling”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/authoring-and-scheduling/assets.html> ／ “Tasks”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/core-concepts/tasks.html> ／ “Best Practices”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/best-practices.html> ／ “Upgrading to Airflow 3”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/installation/upgrading_to_airflow3.html> ／ “Managing Connections”, <https://airflow.apache.org/docs/apache-airflow/3.4.0/howto/connection.html>
 - Dagster Documentation, “Concepts”（アセット）, <https://docs.dagster.io/getting-started/concepts>
 - Prefect Documentation, “Flows”, <https://docs.prefect.io/v3/concepts/flows>
 - Python Documentation, “graphlib — Functionality to operate with graph-like structures”, <https://docs.python.org/3/library/graphlib.html> ／ “os.replace”, <https://docs.python.org/3/library/os.html>
+- PostgreSQL Documentation, “MERGE”, <https://www.postgresql.org/docs/current/sql-merge.html>
 
 !!! tip "さらに深く"
     失敗や遅れの検知を、SLO（サービス水準の目標）とリネージ（データの来歴）まで広げる話は、応用編 第8章「観測性・SLO・リネージ」で扱います。

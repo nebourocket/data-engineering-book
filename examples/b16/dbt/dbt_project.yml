@@ -1,0 +1,13 @@
+name: neboske_b16
+version: "1.0.0"
+config-version: 2
+profile: neboske_b16
+
+model-paths: ["models"]
+
+models:
+  neboske_b16:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

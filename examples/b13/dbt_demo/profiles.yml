@@ -1,0 +1,6 @@
+neboske_quality:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('SHOP_DB', 'shop.duckdb') }}"

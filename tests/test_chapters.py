@@ -249,3 +249,80 @@ def test_no_drafts_left():
     drafts = [p.name for p in BASICS.glob("[0-9][0-9]-*.md")
               if is_draft(p.read_text(encoding="utf-8"))]
     assert drafts == []
+
+
+# ---- コードの構文検査（Python・bash・JSON・YAML）----
+
+def syntax_run(env, lang, code, info_extra="", example=None):
+    """examples に code（または example）を置いたうえで、1 ブロックだけの章を検査します。"""
+    (env / "examples" / "b01" / "a.txt").write_text(example if example is not None else code, encoding="utf-8")
+    block = f"```{lang}{info_extra}\n{code}\n```\n\n"
+    return run(env, make_chapter(extra=block))
+
+
+def test_python_valid_passes(env):
+    assert syntax_run(env, "python", "x = 1\nprint(x)") == []
+
+
+def test_python_truncated_fails_even_if_substring(env):
+    errors = syntax_run(env, "python", "def f(x):\n    return (x +", example="def f(x):\n    return (x + 1)\n")
+    assert any("構文" in e and "python" in e for e in errors)
+
+
+def test_python_excerpt_marker_skips_syntax(env):
+    code = "def f(x):\n    return (x +"
+    assert syntax_run(env, "python", code, ' title="f" excerpt', example=code + " 1)\n") == []
+
+
+def test_bash_valid_passes(env):
+    assert syntax_run(env, "bash", "for f in a b; do\n  echo $f\ndone") == []
+
+
+def test_bash_unclosed_fails(env):
+    errors = syntax_run(env, "bash", "for f in a b; do\n  echo $f")
+    assert any("構文" in e and "bash" in e for e in errors)
+
+
+def test_bash_excerpt_marker_skips_syntax(env):
+    assert syntax_run(env, "bash", "for f in a b; do\n  echo $f", " excerpt") == []
+
+
+def test_console_commands_syntax_checked(env):
+    assert syntax_run(env, "console", "$ echo hi\nhi") == []
+    errors = syntax_run(env, "console", "$ if true; then\nhi")
+    assert any("構文" in e for e in errors)
+
+
+def test_json_valid_passes(env):
+    assert syntax_run(env, "json", '{"a": [1, 2]}') == []
+
+
+def test_json_invalid_fails(env):
+    errors = syntax_run(env, "json", '{"a": [1, 2]', example='{"a": [1, 2]}')
+    assert any("構文" in e and "json" in e for e in errors)
+
+
+def test_json_excerpt_marker_skips_syntax(env):
+    assert syntax_run(env, "json", '"a": 1,', " excerpt") == []
+
+
+def test_yaml_valid_passes(env):
+    assert syntax_run(env, "yaml", "a:\n  - 1\n  - 2") == []
+
+
+def test_yaml_invalid_fails(env):
+    pytest.importorskip("yaml")
+    errors = syntax_run(env, "yaml", "a: [1, 2")
+    assert any("構文" in e and "yaml" in e for e in errors)
+
+
+def test_sql_not_parsed(env):
+    assert syntax_run(env, "sql", "SELECT FROM WHERE;") == []
+
+
+def test_python_uniformly_indented_fragment_passes(env):
+    assert syntax_run(env, "python", "    a = 1\n    b = a + 1") == []
+
+
+def test_bash_uniformly_indented_fragment_passes(env):
+    assert syntax_run(env, "bash", "  echo a\n  echo b") == []

@@ -21,7 +21,7 @@
 
 {{ table("b10-etl-vs-elt") }}
 
-ETL が先に広まったのは、昔のデータウェアハウスの計算力と容量が貴重で、入れる前に絞り込んで整える必要があったからです。その後、クラウドのデータウェアハウス (第11章) が容量と計算を必要なだけ増やせるようになり、先に生のまま入れて、加工を SQL で何度でも直して流し直す ELT が現実的になりました。第9章の landing と raw は、ELT の「E と L」にあたります。*Fundamentals of Data Engineering* の取り込みの章にも、ETL と ELT を扱う節があります。
+ETL が先に使われてきたのは、データウェアハウスの計算力と容量に限りがあり、入れる前に絞り込んで整えるのが自然だったからだ、と説明されることが多くあります (本書の出典では確かめていない、一般的な説明です)。クラウドのデータウェアハウス (第11章) は容量と計算を必要なだけ増やせるので、先に生のまま入れて、加工を SQL で何度でも直して流し直す ELT が現実的な選択になりました。第9章の landing と raw は、ELT の「E と L」にあたります。*Fundamentals of Data Engineering* の取り込みの章にも、ETL と ELT を扱う節があります。
 
 ELT が常に勝つわけではありません。次の場合は、入れる前に変換する ETL が理にかなっています。
 
@@ -51,6 +51,29 @@ flowchart LR
 
 **staging** は、ソースの表を 1 つずつ、使いやすい形に直す層です。列名をそろえ、型を直し、表記ゆれを整え、重複を取り除きます。結合や集計はしません。1 つのソース表に 1 つの staging モデルを対応させると、「この列はどこから来たか」が、いつも 1 つの場所に決まります。第9章で raw に残した 40 件の二重イベントは、ここで取り除きます。
 
+```sql
+with ranked as (
+    select
+        *,
+        row_number() over (
+            partition by event_id
+            order by received_at, event_time, customer_id, event_type
+        ) as rn
+    from {{ source('raw', 'events') }}
+)
+
+select
+    event_id,
+    customer_id,
+    event_type,
+    cast(event_time as timestamp) as event_time,
+    cast(received_at as timestamp) as received_at
+from ranked
+where rn = 1
+```
+
+`row_number` の `order by` は、一意になるまで列を足します (第6章)。二重に届いた行は中身が同じなので、どれが残っても結果は同じですが、決まりとして順序を固定します。
+
 **intermediate** は、複数の staging をまとめる途中の部品です。複数の marts が使う結合や集計を、ここに 1 度だけ書きます。利用者には見せません。
 
 **marts** は、利用者 (BI ツールや分析者) が使う最終の表で、第8章のファクト表 (数えるもの) とディメンション表 (切り口) にあたります。
@@ -70,11 +93,21 @@ dbt は**データを運びません**。E と L には関わらず、基盤の�
 
 オープンソースの dbt Core と、公式の有料サービスがあります。本書は dbt Core を使い、データベースの種類ごとに用意されたアダプターで接続します。この本のイメージには dbt-core 1.12.7 と dbt-duckdb 1.11.1 が入っています (2026年11月時点)。版で設定の書き方や警告が変わるので、手元の版は `dbt --version` で確かめます。
 
-コマンドは `examples/b10/usage.sh` にまとめてあります。生データは、ねぼすけ商店のデータを DuckDB のファイルに書き出したものです。
+手元で動かす手順は `examples/b10/usage.sh` にあります。Docker の開発用イメージで動かす場合、リポジトリの直下で次を実行します。生データ (ねぼすけ商店) を、プロジェクトのフォルダに DuckDB のファイルとして書き出します。
 
 ```bash
-python -c "import sys; sys.path.insert(0, 'examples/common'); from neboske_shop import write_duckdb; write_duckdb('/work/neboske.duckdb')"
+alias DEV='docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/w -w /w/examples/b10 de-book-dev'
+DEV python -c "import sys; sys.path.insert(0, '../common'); from neboske_shop import write_duckdb; write_duckdb('neboske.duckdb')"
 ```
+
+`-w /w/examples/b10` で、作業フォルダがプロジェクトの中になります。以降の `dbt` は、すべてこのフォルダで動かします。最初に、接続の確認 (`dbt debug`) と、全 model の実行 (`dbt run`) をしておきます。
+
+```bash
+DEV dbt debug --profiles-dir .
+DEV dbt run --profiles-dir .
+```
+
+`dbt debug` は、設定ファイルと接続が読めているかを調べます。`dbt run` は model だけを作り、テストは回しません。ここで失敗するなら、テストの前に設定の問題です。DuckDB のファイルのパスは環境変数 `DBT_DUCKDB_PATH` で変えられ、指定しなければ、プロジェクトのフォルダの `neboske.duckdb` を使います。dbt は実行するたびに、`target/` (展開後の SQL と結果) と `logs/` を作ります。これらと DuckDB のファイルはリポジトリに入れないので、`.gitignore` に `target/` `logs/` `dbt_packages/` と `*.duckdb` を書きます (この例の `examples/b10/.gitignore` と同じです)。
 
 ## プロジェクトの構成
 
@@ -129,7 +162,7 @@ neboske:
       threads: 1
 ```
 
-`{{ ... }}` の中は Jinja というテンプレートの式で、`env_var` は環境変数を読みます。`schema: analytics` が、dbt の作る表の置き場所です。`target` を `dev`・`prod` のように書き分けると、同じプロジェクトを別の環境に向けられます。
+`{{ ... }}` の中は Jinja というテンプレートの式で、`env_var` は環境変数を読みます。`schema: analytics` が、dbt の作る表の置き場所です。`threads: 1` は、同時に実行する model の数です。依存のない model が複数あれば、増やすと並列に作られます。DuckDB のファイルは同時に書けるのが 1 つの接続に限られるので、この例は 1 にしています。`target` を `dev`・`prod` のように書き分けると、同じプロジェクトを別の環境に向けられます。
 
 ## model・source・ref
 
@@ -175,6 +208,8 @@ select
     {{ clean_text('status') }} as status
 from {{ source('raw', 'orders') }}
 ```
+
+なお、ねぼすけ商店の時刻は、タイムゾーンのない文字列 (日本時間として扱うもの) です。`cast(... as timestamp)` はタイムゾーンなしの時刻になり、`cast(... as date)` の日付も日本時間の日付です。本物のデータでは、第2章の決まり (UTC でタイムゾーン付き) に合わせて、staging で変換します。
 
 そして marts の `fct_orders` は、`ref` で staging と intermediate を読みます。
 
@@ -234,6 +269,8 @@ materialization は、model の `SELECT` を、データベースの中の何と
 
 {{ table("b10-materialization") }}
 
+表の最後の materialized view は、データベースが結果を保存して更新まで管理する機能で、対応する製品でだけ使えます。本章では扱いません。
+
 **view** は更新のコストがありませんが、読むたびに計算されるので、重い model を重ねると遅くなります。**table** は読みが速い代わりに、実行のたびに全件を作り直します。目安は、軽い整形なら view、読む回数が多く計算が重いなら table、全件の作り直しが重すぎるなら incremental です。`dbt_project.yml` の層ごとの既定はこれに沿っています。特定の model だけ変えるときは、その `.sql` の先頭に `{{ config(...) }}` を書きます (後述)。
 
 ## テスト
@@ -283,11 +320,18 @@ marts では、`fct_orders` の `customer_id` が `dim_customers` に存在す�
 **独自のテスト**には 2 通りあります。1 つ目は **singular テスト**で、`tests/` の下に、失敗した行を返す SQL を 1 本書きます。本章の例は、注文の合計と明細の合計が合うかの確認です。
 
 ```sql
-select
-    (select sum(order_amount) from {{ ref('fct_orders') }}) as orders_total,
-    (select sum(line_amount) from {{ ref('stg_order_items') }}) as items_total
+with totals as (
+    select
+        (select sum(order_amount) from {{ ref('fct_orders') }}) as orders_total,
+        (select sum(line_amount) from {{ ref('stg_order_items') }}) as items_total
+)
+
+select orders_total, items_total
+from totals
 where orders_total <> items_total
 ```
+
+`select` の中でつけた別名 (`orders_total`) を同じ `select` の `where` で参照する書き方は、DuckDB では通りますが、PostgreSQL や標準 SQL では通りません (第5章の評価順)。そこで、いったん `with` (CTE) で別名を確定させてから絞っています。
 
 2 つ目は、**自作の generic テスト**です。`{% test ... %}` で、列に付けられるテストを定義します。
 
@@ -321,6 +365,8 @@ Completed with 1 error, 0 partial successes, and 0 warnings:
 
 もう 1 つ、生データの `events.event_id` にも `unique` を付けました。こちらは `severity: warn` です。
 
+`dbt build --exclude tag:known_issue --profiles-dir .` の出力の一部です。
+
 ```text
 5 of 25 WARN 40 source_unique_raw_events_event_id .............................. [WARN 40 in 0.02s]
 ```
@@ -334,15 +380,22 @@ Completed with 1 error, 0 partial successes, and 0 warnings:
 YAML の `description` に書いた説明は、`dbt docs generate` で集められて、ドキュメントのサイトになります。`dbt docs serve` で、手元のブラウザから見られます。
 
 ```bash
-dbt docs generate --profiles-dir .
-dbt docs serve --profiles-dir .
+DEV dbt docs generate --profiles-dir .
 ```
+
+サイトを見るには `dbt docs serve` を使いますが、Docker の中で動かすと、既定では外から見えません。待ち受けを `0.0.0.0` にして、ポートを公開します。
+
+```bash
+docker run --rm -p 8080:8080 --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/w -w /w/examples/b10 de-book-dev dbt docs serve --host 0.0.0.0 --port 8080 --profiles-dir .
+```
+
+ブラウザで `http://localhost:8080` を開きます。
 
 サイトには、説明、列の一覧、テスト、SQL、そして**リネージ**が載ります。リネージはデータの来歴を示す系統図で、上の層の図のような依存関係を自動で描き、「この列を変えると、どの表に影響するか」「この数字はどの生データから来たか」に答えます。`ref` と `source` から作られるので、手描きの図のようにずれません。依存は `target/manifest.json` にも書かれ、`test_docs_generate_lists_lineage` は、`fct_orders` の親が `stg_orders` と `int_order_totals` であることをここから確かめます。
 
 ## dbt build の流れ
 
-`dbt build` は、seed・model・snapshot・テストを、依存の順に 1 つの流れで実行します。`dbt run` と `dbt test` を別々に回すと、テストが落ちた表を下流が使ってしまいます。`build` は、model を作った直後にその model のテストを行い、**テストが失敗したら、その model に依存する下流を実行せずに飛ばします**。
+`dbt build` は、seed・model・snapshot・テストを、依存の順に 1 つの流れで実行します (snapshot は、元の表の変化を履歴として記録する仕組みで、第8章の SCD2 を dbt で作る手段です。本章では使いません)。`dbt run` と `dbt test` を別々に回すと、テストが落ちた表を下流が使ってしまいます。`build` は、model を作った直後にその model のテストを行い、**テストが失敗したら、その model に依存する下流を実行せずに飛ばします**。
 
 `customers.email` の重複は、すぐには直せません。そこでこのテストに `known_issue` というタグを付け、通常のビルドでは `--exclude` で除いています。
 
@@ -401,25 +454,25 @@ from {{ ref('fct_orders') }}
 where status <> 'cancelled'
 {% if is_incremental() %}
   and order_date >= (
-      select {{ dbt.dateadd('day', -3, 'max(order_date)') }} from {{ this }}
+      select {{ dbt.dateadd('day', -7, 'max(order_date)') }} from {{ this }}
   )
 {% endif %}
 group by order_date
 ```
 
-動きを順に説明します。`is_incremental()` は、(1) その表がすでにあり、(2) `--full-refresh` が付いておらず、(3) model が incremental であるときだけ真になります。つまり最初の 1 回目は偽で、`where` の追加部分が付かず、全件を計算します。2 回目以降は真になり、`{{ this }}` (自分自身の表) の最大の日付から 3 日前以降だけを計算します。`dbt.dateadd` は、日付の足し引きを製品ごとの書き方に合わせて生成する dbt のマクロです。
+動きを順に説明します。`is_incremental()` は、(1) その表がすでにあり、(2) `--full-refresh` が付いておらず、(3) model が incremental であるときだけ真になります。つまり最初の 1 回目は偽で、`where` の追加部分が付かず、全件を計算します。2 回目以降は真になり、`{{ this }}` (自分自身の表) の最大の日付から 7 日前以降だけを計算します。`dbt.dateadd` は、日付の足し引きを製品ごとの書き方に合わせて生成する dbt のマクロです。
 
-なぜ「最大の日付ちょうど」ではなく、3 日前から計算するのでしょうか。第9章で見たとおり、データは遅れて届きます。直近の数日は、あとから注文の状態が変わる (キャンセルされる) ことがあるので、毎回その分を計算し直します。この 3 日は、遅れの最大に合わせて決める値です。
+なぜ「最大の日付ちょうど」ではなく、7 日前から計算するのでしょうか。注文の状態は、あとから変わります (キャンセルなど)。この例では「キャンセルは注文から 7 日以内に起きる」と**仮定**して、直近 7 日を毎回計算し直しています。第9章の「最大 4 日の遅れ」は行動ログ (`events`) の話で、注文のキャンセルには、ねぼすけ商店の合成データに上限がありません。実際の値は、業務の決まりや、過去の変更の分布を調べて決めます。**窓より古い日の変更は、`--full-refresh` をするまで反映されません。**
 
-`unique_key='order_date'` と `incremental_strategy='delete+insert'` は、取り込み先に書き込む方法を決めます。新しく計算した結果に含まれる日付の行を、いったん消してから挿入し直します。これは、第9章のパーティションの置き換えと同じ考え方で、同じ日を何度計算し直しても、結果は変わりません (冪等)。使える戦略はアダプターごとに違うので、dbt-duckdb の文書で確かめます。
+`unique_key='order_date'` と `incremental_strategy='delete+insert'` は、取り込み先に書き込む方法を決めます。新しく計算した結果に含まれる日付の行を、いったん消してから挿入し直します。これは、第9章のパーティションの置き換えと同じ考え方で、同じ日を何度計算し直しても、結果は変わりません (冪等)。dbt-duckdb が扱う戦略は、`append`・`delete+insert`・`merge` (DuckDB 1.4 以降)・`microbatch` (dbt-core 1.9 以降) です。既定が何かは文書に明記されていないので、この例のように `incremental_strategy` を明示して指定します。
 
-テスト (`test_incremental_model_picks_up_new_and_late_changes`) で、次を確かめています。
+テストで、次の 3 つを別々に確かめています。
 
-1. 最後の日より後の注文を元に足して `dbt build` すると、日別売上が 1 行増える。
-2. 直近の日の注文の状態を変更すると、その日の売上が計算し直される。
+1. 新しい日の注文を足すと、日別売上が 1 行増える (`test_incremental_new_day_is_added`)。
+2. 窓の中の日の 2 件のうち 1 件をキャンセルにすると、その日の売上が新しい値に変わる。窓より古い日の同じ変更は、incremental では反映されず、`--full-refresh` で初めて反映される (`test_incremental_recomputes_days_inside_the_window_only`)。
 3. 日付が重複せず、`unique` テストを通る。
 
-ここで 1 つ落とし穴があります。直近の日の注文を**すべて**キャンセルにして incremental で回すと、その日の行は消えず、古い売上のまま残ります。`delete+insert` は、**新しい結果に含まれる日付だけ**を消すからです。その日の結果が 0 行 (すべてキャンセル) だと、消す対象にもなりません。`--full-refresh` を付けると、表を作り直して、この行は消えます。
+もう 1 つ落とし穴があります。**後の日の注文を足さずに**、最後の日の注文を**すべて**キャンセルにして incremental で回すと、その日の行は消えず、古い売上のまま残ります。`delete+insert` は、**新しい結果に含まれる日付だけ**を消すからです。その日の結果が 0 行 (すべてキャンセル) だと、消す対象にもなりません。`--full-refresh` を付けると、表を作り直して、この行は消えます (`test_incremental_keeps_a_stale_row_when_the_day_becomes_empty`)。
 
 ```console
 $ dbt build --select fct_daily_sales --full-refresh --profiles-dir .
@@ -432,22 +485,31 @@ incremental は速い代わりに、「過去の結果を信じる」仕組み�
 CI (継続的インテグレーション) は、変更を出すたびに自動でテストを回す仕組みです (GitHub Actions など)。dbt では、プルリクエストのたびに `dbt build` を**本番とは別の場所**で回し、SQL の変更が下流のテストを落とさないかを、本番を壊す前に知ります。
 
 ```yaml
+# GitHub Actions の例 (本書のリポジトリでは examples の下に置いて動かしません)
+# 各 action のバージョンは 2026年11月時点
 name: dbt
 on:
   pull_request:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # 本物のデータウェアハウスでは、秘密は secrets から環境変数で渡し、profiles.yml の env_var で読む
+      WAREHOUSE_PASSWORD: ${{ secrets.WAREHOUSE_PASSWORD }}
+      DBT_CI_PATH: ci.duckdb
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: pytest examples/b10
+      - run: dbt deps --project-dir examples/b10 --profiles-dir examples/b10
+      - run: dbt build --target ci --project-dir examples/b10 --profiles-dir examples/b10
 ```
 
-本書の例では、`pytest` が `dbt build` を呼びます。`test_b10_dbt.py` は、プロジェクトを一時フォルダにコピーし、ねぼすけ商店のデータを入れた一時の DuckDB に対して実行し、結果を検査します。`dbt` の終了コードが 0 でなければ pytest が失敗し、CI が止まります。本物のデータウェアハウスでは、CI 専用のスキーマで回すのが一般的です。変更した model とその下流だけを回す方法もあり、公式の “Continuous integration” にあります。毎日自動で回す仕組みは、第12章の話です。
+ポイントは 3 つです。(1) `profiles.yml` に CI 専用の接続先 (`ci`) を用意し、スキーマも別 (`ci_pr`) にして、本番や開発の表に触れないようにします。(2) `dbt deps` は、`packages.yml` に書いた外部のパッケージを取得します (この例のプロジェクトは使いませんが、使う場合は CI の最初に要ります)。(3) パスワードなどの秘密は、リポジトリの secrets から環境変数に渡し、`profiles.yml` では `env_var` で読みます。DuckDB の例にはパスワードがないので、`WAREHOUSE_PASSWORD` は形だけです。
+
+本書のリポジトリでは、`pytest` が `dbt build` を呼びます。`test_b10_dbt.py` は、プロジェクトを一時フォルダにコピーし、ねぼすけ商店のデータを入れた一時の DuckDB に対して実行し、結果を検査します。`dbt` の終了コードが 0 でなければ pytest が失敗し、CI が止まります。本物のデータウェアハウスでは、CI 専用のスキーマで回すのが一般的です。変更した model とその下流だけを回す方法もあります。dbt Core では `state:modified+` の選択と `--defer` を使い、ひとつ前の実行結果 (manifest) と比べます (参考文献の “Node selection methods”)。公式の “Continuous integration” は dbt のサービス側の機能の説明なので、dbt Core の CI は上の例のように自分で組みます。毎日自動で回す仕組みは、第12章の話です。
 
 ## よくある失敗
 
@@ -471,7 +533,7 @@ jobs:
 
 ## 練習問題
 
-問 1. `dbt build --select stg_orders+` を実行すると、どの model が作られますか。`int_order_totals` は含まれますか。`dbt ls` で確かめてから、理由を説明してください。
+問 1. 先に `dbt build` を一度通してあるとします。そこで `dbt build --select stg_orders+` を実行すると、どの model が作られますか。`int_order_totals` は含まれますか。`dbt ls` で確かめてから、理由を説明してください。
 
 ??? note "解答例"
     `dbt ls --select stg_orders+ --resource-type model` は、`stg_orders`・`fct_orders`・`fct_daily_sales` の 3 つを返し、`int_order_totals` は含まれません (本文の出力と、`test_selection_with_plus_selects_descendants_only`)。`+` が後ろに付く `stg_orders+` は、`stg_orders` と、それに依存する下流を選ぶからです。`int_order_totals` は `fct_orders` の上流にあたり、`stg_orders` の下流ではありません。実行すると、`fct_orders` は、すでにある `int_order_totals` の view を使って作られます。上流も一緒に回したいなら `+fct_orders` のように、先頭に `+` を付けます。
@@ -481,20 +543,28 @@ jobs:
 ??? note "解答例"
     `accepted_values_stg_orders_status__...` が `FAIL 1` で失敗します (`test_removing_clean_text_makes_accepted_values_fail`)。`accepted_values` は、許す一覧に無い「値」ごとに 1 行を返すので、1 は、違反した行が 1 行という意味ではなく、違反した値が `SHIPPED` の 1 種類だけという意味です。整形を staging に集めたのは、この種のゆれを下流のどこでも意識しなくて済むようにするためです。
 
-問 3. `fct_daily_sales` の直近の日の注文をすべてキャンセルにして、incremental のまま `dbt build` しました。その日の行はどうなりますか。どうすれば消えますか。
+問 3. `fct_daily_sales` は、キャンセルは注文から 7 日以内と仮定した incremental モデルです。8 日以上前の注文をキャンセルにして `dbt build` すると、その日の売上は変わりますか。変えるには、どうしますか。
 
 ??? note "解答例"
-    その日の行は、古い売上のまま残ります (`test_incremental_model_picks_up_new_and_late_changes` が確かめています)。`delete+insert` は、新しく計算した結果に含まれる日付だけを消して入れ直すので、結果が 0 行になった日は消す対象にもなりません。`dbt build --select fct_daily_sales --full-refresh` で表を作り直すと消えます。恒常的には、定期的な full-refresh を運用に入れます。
+    変わりません。窓 (最大の日付の 7 日前以降) の外の日は、incremental の実行では計算し直されないからです。`dbt build --select fct_daily_sales --full-refresh` で表を作り直すと、反映されます (`test_incremental_recomputes_days_inside_the_window_only`)。窓の中の日は、通常の実行で新しい売上に変わります。窓の日数は、業務の仮定です。仮定が崩れたとき (たとえば 30 日後のキャンセルが現れたとき) は、窓を広げるか、定期的に full-refresh をします。
 
-問 4. 受信時刻 `received_at` が発生時刻 `event_time` より前の行を探す singular テストを、`stg_events` に対して書いてください。ねぼすけ商店のデータでは、成功しますか、失敗しますか。
+問 4. 次のテストを `tests/` に置いて `dbt build --select stg_events assert_no_late_events` を実行してください。失敗します。出力を読んで、(a) 失敗の数字の意味、(b) これは本当にデータの異常か、(c) テストをどう直すかを答えてください。
+
+```sql
+select event_id, event_time, received_at
+from {{ ref('stg_events') }}
+where cast(received_at as date) > cast(event_time as date)
+```
 
 ??? note "解答例"
+    (a) `FAIL 121` は、条件に当たった行 (日付をまたいで届いた行) が 121 行という意味です (singular テストは、返った行数がそのまま数字になります)。(b) 異常ではありません。第9章で見たとおり、遅れて届くデータは意図して入れてあり、遅れは最大でも 4 日未満です。「遅れてはいけない」という前提のほうが誤りでした。(c) 遅れを許す上限を決め、それを超えた行だけを返します。
+
     ```sql
     select event_id, event_time, received_at
     from {{ ref('stg_events') }}
-    where received_at < event_time
+    where received_at > event_time + interval '4 days'
     ```
-    `examples/b10/exercises/assert_events_received_after_event_time.sql` に置いてあり、`tests/` にコピーして `dbt build` すると成功します (`test_exercise_singular_test_passes`)。この合成データは `received_at` を `event_time` より後に作っているので、0 行です。本物のデータでは端末の時計のずれで逆転する行が出ることがあり、こうしたテストが役に立ちます。
+    直した版は、`examples/b10/exercises/assert_no_late_events_fixed.sql` にあり、成功します (`test_exercise_failing_singular_test_then_fixed`)。`interval '4 days'` の書き方は PostgreSQL と DuckDB のどちらでも通ります。
 
 問 5. 次の 2 つの場面で、ETL と ELT のどちらを選びますか。理由も述べてください。(a) 会員のメールアドレスと氏名を含む CSV が毎日届き、分析基盤には匿名化した ID だけ置く規則がある。(b) 注文のデータが、すでに基盤に取り込まれていて、売上の集計ロジックを毎週のように直している。
 
@@ -515,9 +585,10 @@ jobs:
 - dbt Documentation, “Add seeds to your DAG”, <https://docs.getdbt.com/docs/build/seeds>
 - dbt Documentation, “Jinja and macros”, <https://docs.getdbt.com/docs/build/jinja-macros>
 - dbt Documentation, “Documentation”, <https://docs.getdbt.com/docs/build/documentation>
-- dbt Documentation, “Continuous integration in dbt”, <https://docs.getdbt.com/docs/deploy/continuous-integration>
-- dbt Documentation, “DuckDB configurations”, <https://docs.getdbt.com/docs/core/connect-data-platform/duckdb-setup>
-- Joe Reis, Matt Housley, *Fundamentals of Data Engineering*, O'Reilly, 2022, Chapter 7 “Ingestion”（ETL と ELT）
+- dbt Documentation, “Continuous integration in dbt”（サービス側の CI）, <https://docs.getdbt.com/docs/deploy/continuous-integration>
+- dbt Documentation, “DuckDB configurations”（incremental の戦略）, <https://docs.getdbt.com/reference/resource-configs/duckdb-configs>
+- dbt Documentation, “Node selection methods”（`state`）, <https://docs.getdbt.com/reference/node-selection/methods#state>
+- Joe Reis, Matt Housley, *Fundamentals of Data Engineering*, O'Reilly, 2022, Chapter 7 “Ingestion”（ETL と ELT の節）
 
 !!! tip "さらに深く"
-    メタデータ・リネージ・SLO を使って、変換の結果を運用で見守る方法は、応用編 第8章「観測性・SLO・リネージ」で扱います。
+    変換の結果を運用で見守る方法は応用編 第8章「観測性・SLO・リネージ」で、source や marts の列の約束をデータ契約として扱う方法は応用編 第7章「データ契約とスキーマ進化」で扱います。

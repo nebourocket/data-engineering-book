@@ -6,7 +6,10 @@ import duckdb
 from star_schema import FACT_ORDER_ITEMS_SQL, FAR_FUTURE, build_star
 
 # タイプ 1: 履歴を残さず上書きする。過去のファクトも新しい名前で見えるようになる。
-SCD1_SQL = "UPDATE dim_product SET name = '枕(標準・改良版)' WHERE product_id = 1"
+SCD1_SQL = """
+UPDATE dim_product SET name = '枕(標準・改良版)'
+WHERE product_id = 1
+"""
 
 # タイプ 2 の手順 1: 今日の顧客マスタ（customers_today）と比べて、属性が変わった顧客を見つける。
 FIND_CHANGES_SQL = """

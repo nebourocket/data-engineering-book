@@ -1,0 +1,4 @@
+業務プロセス（ファクト）,日付,顧客,商品,注文の状態
+注文（fact_order_items）,○,○,○,○
+行動ログ（fact_events）,○,○,,
+月末スナップショット（fact_customer_month_snapshot）,○,○,,

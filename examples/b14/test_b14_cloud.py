@@ -268,3 +268,23 @@ def test_etl_skips_blank_lines(s3_client, bucket, tmp_path):
     path = tmp_path / "e.jsonl"
     path.write_text(json.dumps(generate()["events"][0]) + "\n\n", encoding="utf-8")
     assert len(etl.main({"INPUT_PATH": str(path), "BUCKET": bucket}, client=s3_client)) == 1
+
+
+def test_compact_raises_when_delete_reports_errors(s3_client, bucket):
+    rows = [r for r in generate()["events"] if r["event_time"].startswith("2026-03-01")]
+    storage.write_partitions(s3_client, bucket, "events", rows, rows_per_file=10)
+
+    class FailingDelete:
+        """本物のクライアントを包み、delete_objects だけ一部失敗を返す。"""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def delete_objects(self, **kwargs):
+            return {"Errors": [{"Key": "x", "Code": "AccessDenied"}]}
+
+    with pytest.raises(RuntimeError, match="AccessDenied"):
+        storage.compact(FailingDelete(s3_client), bucket, "events/dt=2026-03-01/")

@@ -12,3 +12,6 @@ python examples/b05/run_sql.py examples/b13/queries.sql pass_rate_by_dimension f
 # dbt のテスト (dbt_demo の中で流す。target/ と logs/ は dbt_demo の下にできる)
 cd examples/b13/dbt_demo
 SHOP_DB=../../../shop.duckdb dbt test --profiles-dir .
+
+# 標準偏差と Z スコアの手計算の例を出力し、本文の表 (CSV) も書き出す
+python examples/b13/zscore_example.py data/tables/b13-zscore-example.csv

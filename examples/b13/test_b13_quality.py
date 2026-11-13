@@ -221,3 +221,34 @@ def test_exercise_price_and_clock_checks(shop):
     assert (b.bad, b.passed) == (0, True)
     shop.execute("UPDATE order_items SET unit_price = unit_price + 1 WHERE order_id = 1 AND line_no = 1")
     assert not quality.run_checks(shop, [exercises.PRICE_MATCHES], "r2")[0].passed
+
+
+def test_unmeasurable_info_check_is_notified(shop):
+    broken = quality.Check("broken", "完全性", "info", "SELECT count(*), count(*) FROM no_such_table")
+    notices = []
+    quality.gate(shop, [broken], "r1", notify=notices.append)  # info なので止まらない
+    assert len(notices) == 1 and "CatalogException" in notices[0]
+
+
+def test_dedup_tie_is_broken_by_rowid(shop):
+    # 重複した行は中身が全く同じ (received_at も同じ) なので、rowid が無いと順位が付けられない
+    shop.execute(QUERIES["make_events_ranked"])
+    dup_ids = shop.execute("SELECT event_id FROM events GROUP BY event_id HAVING count(*) > 1").fetchall()
+    assert len(dup_ids) == 40
+    tied = shop.execute("""SELECT count(*) FROM (SELECT event_id FROM events GROUP BY event_id
+                           HAVING count(*) > 1 AND count(DISTINCT received_at) = 1)""").fetchone()[0]
+    assert tied == 40  # 40 組すべてが received_at でも同順位
+    assert shop.execute("SELECT count(*) = count(DISTINCT (event_id, rn)) FROM events_ranked").fetchone()[0]
+    assert shop.execute("SELECT max(rn) FROM events_ranked").fetchone()[0] == 2
+
+
+def test_zscore_worked_example(tmp_path):
+    import zscore_example
+
+    w = zscore_example.worked_example()
+    assert (w["mean"], sum(w["squares"]), w["variance"]) == (21, 10, 2.5)
+    assert round(w["sd"], 2) == 1.58 and round(w["z"], 2) == 5.69
+    out = tmp_path / "t.csv"
+    zscore_example.write_table(out)
+    table = HERE.parents[1] / "data" / "tables" / "b13-zscore-example.csv"
+    assert out.read_text(encoding="utf-8") == table.read_text(encoding="utf-8")

@@ -149,11 +149,15 @@ def run_checks(con, checks, run_id, now=None):
 
 
 def gate(con, checks, run_id, notify=print, now=None):
-    """確認を流し、warn の不合格は notify で知らせ、error の不合格があれば止めます。"""
+    """確認を流し、warn の不合格は notify で知らせ、error の不合格があれば止めます。
+
+    info は表に残すだけですが、SQL が失敗して測れなかった info は warn と同じく知らせます。
+    """
     results = run_checks(con, checks, run_id, now)
     failed = [r for r in results if not r.passed]
     for r in failed:
-        if r.check.severity == "warn":
+        # info でも、測れなかった (detail がある) ものは黙って通さず、warn と同じように知らせる
+        if r.check.severity == "warn" or (r.check.severity == "info" and r.detail):
             owner = f" (持ち主: {r.check.owner})" if r.check.owner else ""
             notify(f"[WARN] {r.check.name}: {r.bad}/{r.total} {r.detail}{owner}".rstrip())
     errors = [r for r in failed if r.check.severity == "error"]

@@ -1,0 +1,45 @@
+# 章のコード例が使うサービス。使い方は README の「サービスを使う章」を参照。
+services:
+  postgres:
+    image: postgres:16.6
+    environment:
+      POSTGRES_USER: deb
+      POSTGRES_PASSWORD: deb
+      POSTGRES_DB: deb
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deb -d deb"]
+      interval: 3s
+      retries: 20
+
+  minio:
+    # 公式の minio/minio イメージは配布が止まっているため、固定された bitnamilegacy 版を使います。
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r3
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9000/minio/health/live"]
+      interval: 3s
+      retries: 20
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.1
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=512M
+      - --kafka-addr=PLAINTEXT://0.0.0.0:19092
+      - --advertise-kafka-addr=PLAINTEXT://localhost:19092
+    ports:
+      - "19092:19092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 3s
+      retries: 20

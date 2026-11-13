@@ -12,20 +12,20 @@
 
 ## この章で使う表
 
-この章では、顧客の表 `customers` と、注文の表 `orders` を使います。どちらも数行しかありません。前の章と同じ `shop.duckdb` に、2 つの表を足します。この本のフォルダで、次の 2 行を打ってください。1 行目は、ターミナルを開き直したときに必要な `DEV` の別名です (第5章を参照)。2 行目が、表を作る SQL を流します。
+この章では、顧客の表 `customers` と、注文の表 `orders` を使います。どちらも数行しかありません。前の章と同じ `practice.duckdb` に、2 つの表を足します。この本のフォルダで、次の 2 行を打ってください。`DEV` は、[第1章](s01-computer-and-terminal.md)で作った短縮コマンドで、中身は今は分からなくてかまいません。ターミナルを開き直して `DEV` が見つからないときだけ、1 行目をもう一度打ちます。2 行目が、表を作る SQL を流します。
 
 ```bash
 alias DEV='docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/w -w /w de-book-dev'
 ```
 
 ```bash
-DEV python examples/s05/run_sql.py shop.duckdb examples/s06/setup.sql
+DEV python examples/s05/run_sql.py practice.duckdb examples/s06/setup.sql
 ```
 
-何も表示されなければ成功です。表を作り直したいときは、`shop.duckdb` を消して (`rm shop.duckdb`)、もう一度流します。第5章の `products` も消えるので、必要ならそちらも作り直します。以降の SQL は、第5章と同じく `try.sql` に書いて、次の 1 行で流します。
+何も表示されなければ成功です。表を作り直したいときは、`practice.duckdb` を消して (`rm practice.duckdb`)、もう一度流します。第5章の `products` も消えるので、必要なら `practice.sql` を流して作り直します。以降の SQL は、第5章と同じく、エディタ (VS Code) で `try.sql` に書いて **保存してから**、次の 1 行で流します。`try.sql` は、毎回中身を全部書き換えて使います。第5章で作った `try.sql` が残っていても、上書きして構いません。
 
 ```bash
-DEV python examples/s05/run_sql.py shop.duckdb try.sql
+DEV python examples/s05/run_sql.py practice.duckdb try.sql
 ```
 
 2 つの表の中身は、次のとおりです。顧客の表です。
@@ -261,6 +261,28 @@ ORDER BY customer_id;
 
 処理の順は、`WHERE` が先、`GROUP BY` が次、`HAVING` が最後です。顧客 3 だけが残りました。
 
+`GROUP BY` には、数字以外の列も使えます。都道府県ごとに、顧客の人数と、`points` を持つ人の数と、`points` の平均を出します。
+
+```sql
+SELECT prefecture, count(*) AS n, count(points) AS with_points, avg(points) AS average_points
+FROM customers
+GROUP BY prefecture
+ORDER BY prefecture;
+```
+
+```text
+┌────────────┬───────┬─────────────┬────────────────┐
+│ prefecture │   n   │ with_points │ average_points │
+│  varchar   │ int64 │    int64    │     double     │
+├────────────┼───────┼─────────────┼────────────────┤
+│ 大阪       │     1 │           1 │          300.0 │
+│ 東京       │     2 │           1 │          100.0 │
+│ 石川       │     1 │           1 │          200.0 │
+└────────────┴───────┴─────────────┴────────────────┘
+```
+
+東京の山には顧客が 2 人いて、`points` を持つのは 1 人です。平均は、持っている 1 人の 100 で、50 ではありません。この理由は、NULL の節で説明します。
+
 ## JOIN: 2 つの表をつなぐ
 
 注文の表には、顧客の番号だけがあり、名前はありません。「誰の注文か」を名前で見るには、顧客の表と注文の表を、`customer_id` でつなぐ必要があります。この操作を **JOIN** (結合) と呼びます。
@@ -296,7 +318,60 @@ ORDER BY o.order_id;
 └─────────────┴───────────┴──────────┴────────┘
 ```
 
-SQL の読み方です。`FROM customers AS c` で、顧客の表に `c` という短い名前を付けます。`INNER JOIN orders AS o` で、注文の表を `o` という名前でつなぎます。`ON o.customer_id = c.customer_id` が、「どの行どうしをつなぐか」の条件です。`c.name` のように、表の名前 (別名) と列の名前を `.` でつなぐと、「`c` の `name`」という意味になります。
+SQL の読み方です。`FROM customers AS c` で、顧客の表に `c` という短い名前を付けます。`INNER JOIN orders AS o` で、注文の表を `o` という名前でつなぎます。`ON o.customer_id = c.customer_id` が、「どの行どうしをつなぐか」の条件です。
+
+`c.name` のように、短い名前と列の名前を `.` でつなぐと、「`c` の表の `name` 列」という意味になります。`customer_id` のように、2 つの表の両方にある名前は、`c.customer_id` (顧客の表の) か `o.customer_id` (注文の表の) かを、必ずどちらかで書き分けます。`ON` の `=` は、左右を入れ替えても同じ意味です。`ON c.customer_id = o.customer_id` と書いても、結果は同じです。
+
+```sql
+SELECT c.customer_id, c.name, o.order_id, o.amount
+FROM customers AS c
+INNER JOIN orders AS o ON c.customer_id = o.customer_id
+ORDER BY o.order_id;
+```
+
+```text
+┌─────────────┬───────────┬──────────┬────────┐
+│ customer_id │   name    │ order_id │ amount │
+│    int32    │  varchar  │  int32   │ int32  │
+├─────────────┼───────────┼──────────┼────────┤
+│           1 │ 佐藤 太郎 │      101 │   3200 │
+│           1 │ 佐藤 太郎 │      102 │    900 │
+│           2 │ 鈴木 花子 │      103 │   5800 │
+│           3 │ 高橋 健   │      104 │   1200 │
+│           3 │ 高橋 健   │      105 │   2800 │
+│           3 │ 高橋 健   │      106 │   1500 │
+└─────────────┴───────────┴──────────┴────────┘
+```
+
+行ごとの動きを、顧客 1 行ずつたどると、次のようになります。顧客の表の 1 行に、`ON` の条件に合う注文の行を探し、見つかった数だけ、結果の行ができます。
+
+{{ table("s06-join-trace") }}
+
+`INNER JOIN` の行数は、つながる注文の数です。0 件なら 0 行で、行ごと消えます。`LEFT JOIN` は、0 件でも 1 行は残します。合計は、`INNER JOIN` が 2 + 1 + 3 + 0 = 6 行、`LEFT JOIN` が 2 + 1 + 3 + 1 = 7 行です。
+
+!!! tip "まず SELECT * で結合を見る"
+    JOIN を書いたら、最初に `SELECT *` で、つないだあとの全部の列を見てください。どの行がどの行とつながったかが、目で確かめられます。`customer_id` が 2 つ並ぶ (顧客の表のものと、注文の表のもの) のも、ここで分かります。
+
+```sql
+SELECT *
+FROM customers AS c
+INNER JOIN orders AS o ON o.customer_id = c.customer_id
+ORDER BY o.order_id;
+```
+
+```text
+┌─────────────┬───────────┬────────────┬──────────────────┬────────┬──────────┬─────────────┬────────┐
+│ customer_id │   name    │ prefecture │      email       │ points │ order_id │ customer_id │ amount │
+│    int32    │  varchar  │  varchar   │     varchar      │ int32  │  int32   │    int32    │ int32  │
+├─────────────┼───────────┼────────────┼──────────────────┼────────┼──────────┼─────────────┼────────┤
+│           1 │ 佐藤 太郎 │ 東京       │ taro@example.com │    100 │      101 │           1 │   3200 │
+│           1 │ 佐藤 太郎 │ 東京       │ taro@example.com │    100 │      102 │           1 │    900 │
+│           2 │ 鈴木 花子 │ 大阪       │                  │    300 │      103 │           2 │   5800 │
+│           3 │ 高橋 健   │ 東京       │ NULL             │   NULL │      104 │           3 │   1200 │
+│           3 │ 高橋 健   │ 東京       │ NULL             │   NULL │      105 │           3 │   2800 │
+│           3 │ 高橋 健   │ 東京       │ NULL             │   NULL │      106 │           3 │   1500 │
+└─────────────┴───────────┴────────────┴──────────────────┴────────┴──────────┴─────────────┴────────┘
+```
 
 つなぐ前の 2 つの表は、顧客が 4 行、注文が 6 行でした。つないだ後を見てください。
 
@@ -315,6 +390,8 @@ SELECT customer_id FROM customers AS c INNER JOIN orders AS o ON o.customer_id =
 ```text
 Binder Error: Ambiguous reference to column name "customer_id" (use: 'c.customer_id' or 'o.customer_id')
 ```
+
+メッセージの `use:` の後ろに、「`c.customer_id` か `o.customer_id` と書いてください」と、直し方が出ています。どちらの表の列かを `.` の前で指定すれば、通ります。
 
 ### LEFT JOIN
 
@@ -352,27 +429,41 @@ ORDER BY c.customer_id, o.order_id;
 
 {{ table("s06-join-kinds") }}
 
+顧客の行数は、先ほどの表のとおり 4 行です。注文は 6 行でした。つないだあとの行数を、1 つずつ数えます。`INNER JOIN` の結果です。
+
 ```sql
-SELECT (SELECT count(*) FROM customers) AS customers_rows,
-       (SELECT count(*) FROM orders) AS orders_rows,
-       (SELECT count(*)
-        FROM customers AS c
-        INNER JOIN orders AS o ON o.customer_id = c.customer_id) AS inner_rows,
-       (SELECT count(*)
-        FROM customers AS c
-        LEFT JOIN orders AS o ON o.customer_id = c.customer_id) AS left_rows;
+SELECT count(*) AS inner_rows
+FROM customers AS c
+INNER JOIN orders AS o ON o.customer_id = c.customer_id;
 ```
 
 ```text
-┌────────────────┬─────────────┬────────────┬───────────┐
-│ customers_rows │ orders_rows │ inner_rows │ left_rows │
-│     int64      │    int64    │   int64    │   int64   │
-├────────────────┼─────────────┼────────────┼───────────┤
-│              4 │           6 │          6 │         7 │
-└────────────────┴─────────────┴────────────┴───────────┘
+┌────────────┐
+│ inner_rows │
+│   int64    │
+├────────────┤
+│          6 │
+└────────────┘
 ```
 
-顧客 4 行・注文 6 行で、`INNER JOIN` の結果は 6 行、`LEFT JOIN` の結果は 7 行でした。6 行は、注文の数と同じです。7 行は、そこに、注文がない顧客 1 人が足されたものです。つなぐ前後で行数を数える習慣を付けると、結合の間違いに気づけます。
+`LEFT JOIN` の結果です。
+
+```sql
+SELECT count(*) AS left_rows
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id;
+```
+
+```text
+┌───────────┐
+│ left_rows │
+│   int64   │
+├───────────┤
+│         7 │
+└───────────┘
+```
+
+`INNER JOIN` は 6 行、`LEFT JOIN` は 7 行でした。6 行は、注文の数と同じです。7 行は、そこに、注文がない顧客 1 人が足されたものです。つなぐ前後で行数を数える習慣を付けると、結合の間違いに気づけます。
 
 `LEFT JOIN` には、使いどころがあります。「注文のない顧客」を探すには、つないだあとに、注文側が `NULL` の行を取り出します。
 
@@ -416,6 +507,136 @@ ORDER BY c.name;
 
 田中 美咲の注文数は 0、合計は `NULL` (注文がないので足すものがない) です。注文数を `count(o.order_id)` と書いたことに注目してください。`count(*)` と書くと、田中 美咲の行 (注文側が NULL の 1 行) を数えて 1 になってしまいます。この違いは、次の節の `count(列)` で説明します。
 
+### JOIN の落とし穴 3 つ
+
+**1. LEFT JOIN のあとの WHERE が、相手のない行を消す。** 注文が 1,000 円以上の顧客だけを見たくて、`WHERE o.amount >= 1000` を付けたとします。
+
+```sql
+SELECT c.name, o.order_id, o.amount
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id
+WHERE o.amount >= 1000
+ORDER BY o.order_id;
+```
+
+```text
+┌───────────┬──────────┬────────┐
+│   name    │ order_id │ amount │
+│  varchar  │  int32   │ int32  │
+├───────────┼──────────┼────────┤
+│ 佐藤 太郎 │      101 │   3200 │
+│ 鈴木 花子 │      103 │   5800 │
+│ 高橋 健   │      104 │   1200 │
+│ 高橋 健   │      105 │   2800 │
+│ 高橋 健   │      106 │   1500 │
+└───────────┴──────────┴────────┘
+```
+
+田中 美咲が消えました。田中は、注文側が `NULL` の行で、`NULL >= 1000` は `true` にならないためです。`LEFT JOIN` を使った意味がなくなります。顧客を残したまま条件を付けるには、条件を `ON` に書きます。
+
+```sql
+SELECT c.name, o.order_id, o.amount
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id AND o.amount >= 1000
+ORDER BY c.customer_id, o.order_id;
+```
+
+```text
+┌───────────┬──────────┬────────┐
+│   name    │ order_id │ amount │
+│  varchar  │  int32   │ int32  │
+├───────────┼──────────┼────────┤
+│ 佐藤 太郎 │      101 │   3200 │
+│ 鈴木 花子 │      103 │   5800 │
+│ 高橋 健   │      104 │   1200 │
+│ 高橋 健   │      105 │   2800 │
+│ 高橋 健   │      106 │   1500 │
+│ 田中 美咲 │     NULL │   NULL │
+└───────────┴──────────┴────────┘
+```
+
+今度は、田中 美咲が `NULL` つきで残りました。佐藤 太郎の 900 円の注文 (102) だけが、つながる相手から外れています。「つなぐ条件」は `ON`、「結果を絞る条件」は `WHERE`、と使い分けます。
+
+**2. 1 対多でつなぐと、顧客の側の値が重複して足される。** 顧客の `points` の合計を、注文とつないだあとに出してみます。
+
+```sql
+SELECT sum(c.points) AS total_points
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id;
+```
+
+```text
+┌──────────────┐
+│ total_points │
+│    int128    │
+├──────────────┤
+│          700 │
+└──────────────┘
+```
+
+正しい合計は、つなぐ前の表で数えた次の値です。
+
+```sql
+SELECT sum(points) AS total_points FROM customers;
+```
+
+```text
+┌──────────────┐
+│ total_points │
+│    int128    │
+├──────────────┤
+│          600 │
+└──────────────┘
+```
+
+600 のはずが、700 になりました。顧客 1 の 100 ポイントが、注文 2 件ぶん、2 回足されたためです (100 × 2 + 300 + 200 = 700)。つなぐと行が増えるので、顧客の側の列を足すと、増えた行ぶんも足されます。顧客の側の値を集計するときは、つなぐ前に集計するか、つなぎません。顧客の人数を数えるときは、重複を除く `count(DISTINCT 列)` が使えます。
+
+```sql
+SELECT count(*) AS orders_rows, count(DISTINCT customer_id) AS customers_with_orders
+FROM orders;
+```
+
+```text
+┌─────────────┬───────────────────────┐
+│ orders_rows │ customers_with_orders │
+│    int64    │         int64         │
+├─────────────┼───────────────────────┤
+│           6 │                     3 │
+└─────────────┴───────────────────────┘
+```
+
+注文は 6 件で、注文のある顧客は 3 人です。`DISTINCT` は「重複を除いて」という意味です。
+
+**3. 条件を書き忘れると、全部の組み合わせができる。** `INNER JOIN` で `ON` を書き忘れると、DuckDB は文の形がおかしいとして、エラーにします。
+
+```sql
+SELECT count(*) FROM customers AS c INNER JOIN orders AS o;
+```
+
+```text
+Parser Error: syntax error at or near ";"
+
+LINE 1: SELECT count(*) FROM customers AS c INNER JOIN orders AS o;
+                                                                  ^
+```
+
+ところが、表をカンマで並べる古い書き方 (`FROM customers AS c, orders AS o`) では、条件がなくてもエラーになりません。
+
+```sql
+SELECT count(*) AS cross_rows FROM customers AS c, orders AS o;
+```
+
+```text
+┌────────────┐
+│ cross_rows │
+│   int64    │
+├────────────┤
+│         24 │
+└────────────┘
+```
+
+4 × 6 = 24 行です。顧客 4 人と注文 6 件の、全部の組み合わせができました。これを **クロス結合** と呼びます。数百行ずつの表なら数十万行になり、気づかないうちに重くなります。この本では、`JOIN ... ON` の形だけを使います。結果の行数が、思ったより桁違いに多いときは、`ON` の書き忘れを疑ってください。
+
 ## NULL: 空であることの意味
 
 これまで何度か出てきた `NULL` を、ここで整理します。**NULL** は、「値が分からない・入っていない」ことを表す特別な印です。0 でも、空の文字列でもありません。
@@ -442,7 +663,7 @@ SELECT customer_id, email, points FROM customers;
 
 ### NULL との計算と比較
 
-`NULL` が混ざった計算の結果は、`NULL` です。`NULL` どうしの比較 (`=`) も、`true` でも `false` でもなく、`NULL` (分からない) になります。
+`NULL` が混ざった計算の結果は、`NULL` です。`NULL` どうしの比較 (`=`) も、`true` でも `false` でもなく、`NULL` (分からない) になります。第5章でも使った、`FROM` のない `SELECT` で確かめます。表を使わず、式の答えだけを出します。
 
 ```sql
 SELECT 1 + NULL AS plus, NULL = NULL AS equal, NULL IS NULL AS is_null;
@@ -557,9 +778,49 @@ SELECT name, points FROM customers WHERE points < 200;
 
 200 以上が 2 人、200 未満が 1 人で、合わせて 3 人です。顧客は 4 人いるので、1 人が足りません。`points` が `NULL` の高橋 健が、どちらの結果にも出ていないためです。「どちらかに必ず入る」という思い込みが、数字のずれのもとになります。
 
+### NULL の並べ替え
+
+`ORDER BY` では、`NULL` はどこに並ぶでしょうか。小さい順に並べます。
+
+```sql
+SELECT customer_id, points FROM customers ORDER BY points;
+```
+
+```text
+┌─────────────┬────────┐
+│ customer_id │ points │
+│    int32    │ int32  │
+├─────────────┼────────┤
+│           1 │    100 │
+│           4 │    200 │
+│           2 │    300 │
+│           3 │   NULL │
+└─────────────┴────────┘
+```
+
+大きい順 (`DESC`) にします。
+
+```sql
+SELECT customer_id, points FROM customers ORDER BY points DESC;
+```
+
+```text
+┌─────────────┬────────┐
+│ customer_id │ points │
+│    int32    │ int32  │
+├─────────────┼────────┤
+│           2 │    300 │
+│           4 │    200 │
+│           1 │    100 │
+│           3 │   NULL │
+└─────────────┴────────┘
+```
+
+DuckDB (2.0.0) では、どちらの向きでも、`NULL` は最後に並びました。「小さい順の先頭が最小値」と思い込むと、`NULL` の行が先頭か末尾かで、読み違えます。`LIMIT` と組み合わせるときは、特に注意してください。
+
 ### 集計と NULL
 
-集計関数は、`count(*)` 以外、`NULL` を無視します。
+ほとんどの集計関数は、`NULL` を無視します (`count(*)` は行そのものを数えるので別です)。`list` のように、`NULL` を含めたまま並べる関数もあります。
 
 ```sql
 SELECT count(*) AS all_rows, count(email) AS with_email, count(points) AS with_points
@@ -690,6 +951,8 @@ FROM (SELECT customer_id, sum(amount) AS total FROM orders GROUP BY customer_id)
 
 基礎編 [第5章 SQL 基礎](../basics/05-sql-basics.md) は、これらを 3,000 件の注文があるねぼすけ商店のデータで、もう一度、より深く扱います。NULL と三値論理、`FULL JOIN`、`CASE`、日付、`UNION`、SQL の評価順などが加わります。そのあとの [第6章 SQL 応用](../basics/06-sql-advanced.md) は、ウィンドウ関数や実行計画に進みます。
 
+なお、基礎編 第5章は、この準備編とは別の道具を使います。`examples/b05/run_sql.py` という別の実行用スクリプトで、`-- name: 名前` の印を付けた SQL を名前で選んで流します。データも、3,000 件の注文を持つ、別の `shop.duckdb` を、自動で作ります。この準備編で作った `practice.duckdb` とは別のファイルなので、混ざる心配はありません。
+
 ## よくある失敗
 
 - `GROUP BY` に書いていない列を、そのまま `SELECT` に書いて、エラーになる。集計関数に入れるか、`GROUP BY` に足す。
@@ -701,6 +964,10 @@ FROM (SELECT customer_id, sum(amount) AS total FROM orders GROUP BY customer_id)
 - `LEFT JOIN` のあとに `count(*)` を使い、相手のない行まで 1 として数える。数えたい相手の側の列を、`count(列)` で数える。
 - 空の文字列と `NULL` を同じだと思い込む。別の値として、両方を調べる。
 - `NULL` の行が、`>=` の条件にも `<` の条件にも入らないことを忘れる。
+- `LEFT JOIN` のあとの `WHERE o.列 >= ...` で、相手のない行が消える。つなぐ条件は `ON` に書く。
+- 1 対多でつないだあとに、顧客の側の列を `sum` して、重複して足してしまう。
+- 表をカンマで並べて条件を忘れ、全部の組み合わせ (クロス結合) で行が爆発する。
+- `NULL` が `ORDER BY` の最後に並ぶことを知らず、`LIMIT` で結果を読み違える。
 
 ## まとめ
 
@@ -778,6 +1045,42 @@ FROM (SELECT customer_id, sum(amount) AS total FROM orders GROUP BY customer_id)
     WHERE amount = (SELECT max(amount) FROM orders);
     ```
     丸括弧の中が先に実行され、5800 になります。結果は注文 103 の 1 行です。
+
+問 7. 注文が 1 件もない顧客の、名前と都道府県を出してください。
+
+??? note "解答例"
+    ```sql
+    SELECT c.name, c.prefecture
+    FROM customers AS c
+    LEFT JOIN orders AS o ON o.customer_id = c.customer_id
+    WHERE o.order_id IS NULL;
+    ```
+    `LEFT JOIN` のあと、注文側の `order_id` が `NULL` の行を取り出します。田中 美咲 (石川) の 1 人です。`WHERE o.order_id = NULL` と書くと 0 行になるので、必ず `IS NULL` を使います。
+
+問 8. 顧客ごとの注文数を、注文のない顧客も 0 件として、多い順に出してください。同じ件数の顧客は、名前の順にします。
+
+??? note "解答例"
+    ```sql
+    SELECT c.name, count(o.order_id) AS n
+    FROM customers AS c
+    LEFT JOIN orders AS o ON o.customer_id = c.customer_id
+    GROUP BY c.name
+    ORDER BY n DESC, c.name;
+    ```
+    高橋 健 (3)、佐藤 太郎 (2)、鈴木 花子 (1)、田中 美咲 (0) の順です。`count(*)` ではなく `count(o.order_id)` を使うのが要点です。`count(*)` だと、田中 美咲が 1 になってしまいます。
+
+問 9. 注文の合計金額が 5,000 円以上の顧客を、名前と合計金額で出してください。`INNER JOIN` と `HAVING` を使います。
+
+??? note "解答例"
+    ```sql
+    SELECT c.name, sum(o.amount) AS total
+    FROM customers AS c
+    INNER JOIN orders AS o ON o.customer_id = c.customer_id
+    GROUP BY c.name
+    HAVING sum(o.amount) >= 5000
+    ORDER BY c.name;
+    ```
+    鈴木 花子 (5800) と 高橋 健 (5500) です。`JOIN` で名前をつなぎ、`GROUP BY` で山に分け、`HAVING` で山を絞ります。問 3 を、名前つきで出した形です。
 
 ## 参考文献
 

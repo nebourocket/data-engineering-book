@@ -28,5 +28,8 @@ SELECT name price FROM products LIMIT 2;
 -- name: create_twice
 CREATE TABLE products (
     product_id INTEGER PRIMARY KEY,
-    name       VARCHAR
+    name       VARCHAR,
+    category   VARCHAR,
+    price      INTEGER,
+    stock      INTEGER
 );

@@ -22,6 +22,16 @@ TABLE_QUERIES = {
         SELECT c.customer_id, c.name, o.order_id, o.amount
         FROM customers AS c LEFT JOIN orders AS o ON o.customer_id = c.customer_id
         ORDER BY c.customer_id, o.order_id""",
+    "s06-join-trace": """
+        SELECT c.customer_id AS "顧客",
+               c.name AS "名前",
+               coalesce(string_agg(CAST(o.order_id AS VARCHAR), ' と ' ORDER BY o.order_id), '(なし)')
+                   AS "つながる注文",
+               count(o.order_id) AS "INNER JOIN で出る行数",
+               greatest(count(o.order_id), 1) AS "LEFT JOIN で出る行数"
+        FROM customers AS c LEFT JOIN orders AS o ON o.customer_id = c.customer_id
+        GROUP BY c.customer_id, c.name
+        ORDER BY c.customer_id""",
 }
 
 

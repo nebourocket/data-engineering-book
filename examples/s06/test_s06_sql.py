@@ -28,6 +28,7 @@ QUERIES = run_sql.split_queries((HERE / "queries.sql").read_text(encoding="utf-8
 ERROR_NAMES = {
     "group_by_wrong": ("must appear in the GROUP BY clause", duckdb.BinderException),
     "where_aggregate_wrong": ("WHERE clause cannot contain aggregates", duckdb.BinderException),
+    "join_no_on": ('syntax error at or near ";"', duckdb.ParserException),
     "join_ambiguous": ("Ambiguous reference to column name", duckdb.BinderException),
 }
 
@@ -58,7 +59,21 @@ EXPECT = {
     "where_and_having": lambda r: r == [(3, 3, 5500)],
     "join_inner": lambda r: len(r) == 6 and r[0] == (1, "佐藤 太郎", 101, 3200) and 4 not in [x[0] for x in r],
     "join_left": lambda r: len(r) == 7 and r[-1] == (4, "田中 美咲", None, None),
-    "join_counts": lambda r: r == [(4, 6, 6, 7)],
+    "count_customers": lambda r: r == [(4,)],
+    "join_count_inner": lambda r: r == [(6,)],
+    "join_count_left": lambda r: r == [(7,)],
+    "join_on_swapped": lambda r: len(r) == 6 and r[0] == (1, "佐藤 太郎", 101, 3200),
+    "join_star": lambda r: len(r) == 6 and len(r[0]) == 8,
+    "cross_rows": lambda r: r == [(24,)],  # 4 x 6
+    "left_where_wrong": lambda r: [x[1] for x in r] == [101, 103, 104, 105, 106],
+    "left_on_right": lambda r: r == [("佐藤 太郎", 101, 3200), ("鈴木 花子", 103, 5800), ("高橋 健", 104, 1200),
+                                     ("高橋 健", 105, 2800), ("高橋 健", 106, 1500), ("田中 美咲", None, None)],
+    "fanout_wrong": lambda r: r == [(700,)],  # 100 x 2 + 300 + 200
+    "fanout_ok": lambda r: r == [(600,)],
+    "count_distinct": lambda r: r == [(6, 3)],
+    "group_prefecture": lambda r: r == [("大阪", 1, 1, 300.0), ("東京", 2, 1, 100.0), ("石川", 1, 1, 200.0)],
+    "order_null_asc": lambda r: r == [(1, 100), (4, 200), (2, 300), (3, None)],
+    "order_null_desc": lambda r: r == [(2, 300), (4, 200), (1, 100), (3, None)],
     "join_no_orders": lambda r: r == [("田中 美咲",)],
     "join_group": lambda r: r == [("佐藤 太郎", 2, 4100), ("田中 美咲", 0, None), ("鈴木 花子", 1, 5800),
                                   ("高橋 健", 3, 5500)],
@@ -94,6 +109,19 @@ def test_exercise_answers(con):
                            ("高橋 健", 105, 2800), ("高橋 健", 106, 1500)]
     assert rows("ex5") == [("大阪", 1, 300.0), ("東京", 2, 100.0), ("石川", 1, 200.0)]
     assert rows("ex6") == [(103, 5800)]
+    assert rows("ex7") == [("田中 美咲", "石川")]
+    assert rows("ex8") == [("高橋 健", 3), ("佐藤 太郎", 2), ("鈴木 花子", 1), ("田中 美咲", 0)]
+    assert rows("ex9") == [("鈴木 花子", 5800), ("高橋 健", 5500)]
+
+
+def test_swapped_on_gives_same_rows(con):
+    assert con.execute(QUERIES["join_on_swapped"]).fetchall() == con.execute(QUERIES["join_inner"]).fetchall()
+
+
+def test_list_functions_keep_null(con):
+    """ほとんどの集計関数は NULL を無視しますが、list は NULL を含めます。"""
+    assert con.execute("SELECT list(points) FROM customers").fetchall() == [([100, 300, None, 200],)]
+    assert con.execute("SELECT count(points), sum(points) FROM customers").fetchall() == [(3, 600)]
 
 
 def test_every_query_has_an_expectation():

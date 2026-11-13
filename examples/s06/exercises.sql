@@ -31,3 +31,24 @@ ORDER BY prefecture;
 SELECT order_id, amount
 FROM orders
 WHERE amount = (SELECT max(amount) FROM orders);
+
+-- name: ex7
+SELECT c.name, c.prefecture
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id
+WHERE o.order_id IS NULL;
+
+-- name: ex8
+SELECT c.name, count(o.order_id) AS n
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id
+GROUP BY c.name
+ORDER BY n DESC, c.name;
+
+-- name: ex9
+SELECT c.name, sum(o.amount) AS total
+FROM customers AS c
+INNER JOIN orders AS o ON o.customer_id = c.customer_id
+GROUP BY c.name
+HAVING sum(o.amount) >= 5000
+ORDER BY c.name;

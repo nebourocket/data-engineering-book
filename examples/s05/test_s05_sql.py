@@ -177,3 +177,8 @@ def test_screen_output_in_book_is_real(tmp_path):
     assert len(screens) >= 20
     for block in screens:
         assert block in real, block[:80]
+
+
+def test_fullwidth_space_is_accepted_by_duckdb_2(con):
+    """全角スペースを区切りに使った文が、手元の DuckDB では通ることを確かめます（本文で触れています）。"""
+    assert con.execute("SELECT name FROM products\u3000WHERE product_id = 1").fetchall() == [("枕",)]

@@ -1,6 +1,6 @@
 """SQL ファイルを DuckDB のデータベースファイルに流して、結果を表示します。
 
-使い方: python examples/s05/run_sql.py shop.duckdb 流す.sql [名前 ...]
+使い方: python examples/s05/run_sql.py practice.duckdb 流す.sql [名前 ...]
 SQL ファイルは「-- name: 名前」の行でひとまとまりに区切れます。名前を渡すと、そのまとまりだけを流します。
 名前を渡さなければファイル全体を流します。SELECT の結果は表で表示し、エラーは内容を表示して終わります。
 """

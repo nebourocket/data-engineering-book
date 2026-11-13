@@ -66,15 +66,73 @@ FROM customers AS c
 LEFT JOIN orders AS o ON o.customer_id = c.customer_id
 ORDER BY c.customer_id, o.order_id;
 
--- name: join_counts
-SELECT (SELECT count(*) FROM customers) AS customers_rows,
-       (SELECT count(*) FROM orders) AS orders_rows,
-       (SELECT count(*)
-        FROM customers AS c
-        INNER JOIN orders AS o ON o.customer_id = c.customer_id) AS inner_rows,
-       (SELECT count(*)
-        FROM customers AS c
-        LEFT JOIN orders AS o ON o.customer_id = c.customer_id) AS left_rows;
+-- name: count_customers
+SELECT count(*) AS customers_rows FROM customers;
+
+-- name: join_count_inner
+SELECT count(*) AS inner_rows
+FROM customers AS c
+INNER JOIN orders AS o ON o.customer_id = c.customer_id;
+
+-- name: join_count_left
+SELECT count(*) AS left_rows
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id;
+
+-- name: join_on_swapped
+SELECT c.customer_id, c.name, o.order_id, o.amount
+FROM customers AS c
+INNER JOIN orders AS o ON c.customer_id = o.customer_id
+ORDER BY o.order_id;
+
+-- name: join_star
+SELECT *
+FROM customers AS c
+INNER JOIN orders AS o ON o.customer_id = c.customer_id
+ORDER BY o.order_id;
+
+-- name: join_no_on
+SELECT count(*) FROM customers AS c INNER JOIN orders AS o;
+
+-- name: cross_rows
+SELECT count(*) AS cross_rows FROM customers AS c, orders AS o;
+
+-- name: left_where_wrong
+SELECT c.name, o.order_id, o.amount
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id
+WHERE o.amount >= 1000
+ORDER BY o.order_id;
+
+-- name: left_on_right
+SELECT c.name, o.order_id, o.amount
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id AND o.amount >= 1000
+ORDER BY c.customer_id, o.order_id;
+
+-- name: fanout_wrong
+SELECT sum(c.points) AS total_points
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.customer_id;
+
+-- name: fanout_ok
+SELECT sum(points) AS total_points FROM customers;
+
+-- name: count_distinct
+SELECT count(*) AS orders_rows, count(DISTINCT customer_id) AS customers_with_orders
+FROM orders;
+
+-- name: group_prefecture
+SELECT prefecture, count(*) AS n, count(points) AS with_points, avg(points) AS average_points
+FROM customers
+GROUP BY prefecture
+ORDER BY prefecture;
+
+-- name: order_null_asc
+SELECT customer_id, points FROM customers ORDER BY points;
+
+-- name: order_null_desc
+SELECT customer_id, points FROM customers ORDER BY points DESC;
 
 -- name: join_no_orders
 SELECT c.name

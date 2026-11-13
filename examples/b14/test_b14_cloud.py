@@ -111,7 +111,7 @@ def test_make_client_switches_by_environment():
     assert aws.meta.endpoint_url == "https://s3.ap-northeast-1.amazonaws.com"
 
 
-def test_small_files_cost_space_and_hive_partitions_prune(tmp_path):
+def test_small_files_cost_space_and_hive_folder_count_filters_one_day(tmp_path):
     stats = small_files.compare(tmp_path / "cmp")
     assert stats["one"]["rows"] == stats["small"]["rows"] == 4040
     assert (stats["one"]["files"], stats["small"]["files"]) == (1, 41)
@@ -244,3 +244,27 @@ def test_prefix_match_is_character_by_character(s3_client, bucket):
         s3_client.put_object(Bucket=bucket, Key=f"events/dt={day}/p", Body=b"x")
     keys, _ = storage.list_keys(s3_client, bucket, "events/dt=2026-01-0")
     assert keys == ["events/dt=2026-01-01/p", "events/dt=2026-01-02/p"]  # 10 日は入らない
+
+
+def test_lifecycle_keeps_other_rules_and_replaces_same_id(s3_client, bucket):
+    storage.expire_prefix_after(s3_client, bucket, "tmp/", days=7)
+    storage.expire_prefix_after(s3_client, bucket, "scratch/", days=3)
+    storage.expire_prefix_after(s3_client, bucket, "tmp/", days=14)
+    rules = {r["ID"]: r["Expiration"]["Days"] for r in
+             s3_client.get_bucket_lifecycle_configuration(Bucket=bucket)["Rules"]}
+    assert rules == {"expire-tmp": 14, "expire-scratch": 3}
+
+
+def test_compact_with_nothing_to_merge_returns_none(s3_client, bucket):
+    assert storage.compact(s3_client, bucket, "events/dt=2000-01-01/") is None
+
+
+def test_make_client_needs_both_keys():
+    with pytest.raises(ValueError, match="S3_SECRET_KEY"):
+        storage.make_client({"S3_ACCESS_KEY": "a"})
+
+
+def test_etl_skips_blank_lines(s3_client, bucket, tmp_path):
+    path = tmp_path / "e.jsonl"
+    path.write_text(json.dumps(generate()["events"][0]) + "\n\n", encoding="utf-8")
+    assert len(etl.main({"INPUT_PATH": str(path), "BUCKET": bucket}, client=s3_client)) == 1

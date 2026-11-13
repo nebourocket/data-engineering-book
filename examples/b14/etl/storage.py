@@ -23,6 +23,8 @@ def make_client(env=None):
         kwargs["endpoint_url"] = env["S3_ENDPOINT"]
         kwargs["config"] = Config(s3={"addressing_style": "path"})  # MinIO はパス形式
     if env.get("S3_ACCESS_KEY"):  # 無ければ boto3 の標準の探し方 (環境変数・ロール) に任せる
+        if not env.get("S3_SECRET_KEY"):
+            raise ValueError("S3_ACCESS_KEY を渡したなら S3_SECRET_KEY も必要です")
         kwargs["aws_access_key_id"] = env["S3_ACCESS_KEY"]
         kwargs["aws_secret_access_key"] = env["S3_SECRET_KEY"]
     return boto3.client("s3", **kwargs)
@@ -74,8 +76,14 @@ def list_folders(client, bucket, prefix):
 
 
 def compact(client, bucket, partition_prefix):
-    """prefix 配下の小さな Parquet を 1 つにまとめます。先に書いてから古いものを消します。"""
+    """prefix 配下の小さな Parquet を 1 つにまとめます。先に書いてから古いものを消します。
+
+    パーティション 1 つ分をメモリに全部読むので、大きなパーティションには向きません。
+    まとめるものが無ければ何もせず None を返します。
+    """
     keys, _ = list_keys(client, bucket, partition_prefix)
+    if not keys:
+        return None
     tables = [pq.read_table(io.BytesIO(client.get_object(Bucket=bucket, Key=k)["Body"].read()))
               for k in keys]
     merged = pa.concat_tables(tables)
@@ -85,7 +93,9 @@ def compact(client, bucket, partition_prefix):
     client.put_object(Bucket=bucket, Key=new_key, Body=buf.getvalue())
     old = [{"Key": k} for k in keys if k != new_key]
     for i in range(0, len(old), 1000):  # delete_objects は 1 回 1000 件まで
-        client.delete_objects(Bucket=bucket, Delete={"Objects": old[i:i + 1000]})
+        response = client.delete_objects(Bucket=bucket, Delete={"Objects": old[i:i + 1000]})
+        if response.get("Errors"):  # 一部だけ消せなかった場合も例外にする
+            raise RuntimeError(f"削除に失敗したキーがあります: {response['Errors'][0]}")
     return new_key
 
 
@@ -103,12 +113,20 @@ def presigned_get(client, bucket, key, seconds=60):
 
 
 def expire_prefix_after(client, bucket, prefix, days):
-    """prefix 配下のオブジェクトを days 日後に自動で消すライフサイクル規則を設定します。"""
-    client.put_bucket_lifecycle_configuration(
-        Bucket=bucket,
-        LifecycleConfiguration={"Rules": [{
-            "ID": f"expire-{prefix.strip('/').replace('/', '-')}",
-            "Filter": {"Prefix": prefix},
-            "Status": "Enabled",
-            "Expiration": {"Days": days},
-        }]})
+    """prefix 配下のオブジェクトを days 日後に自動で消す規則を足します。
+
+    put_bucket_lifecycle_configuration は規則の「全体」を置き換えるので、先に今の規則を読み、
+    同じ ID の規則だけ差し替えます (読まずに書くと、既にある他の規則が消えます)。
+    Terraform で管理しているバケットでは、ここからは触らず Terraform 側だけで書き換えます。
+    """
+    rule_id = f"expire-{prefix.strip('/').replace('/', '-')}"
+    try:
+        rules = client.get_bucket_lifecycle_configuration(Bucket=bucket)["Rules"]
+    except client.exceptions.ClientError as e:
+        if e.response["Error"]["Code"] != "NoSuchLifecycleConfiguration":
+            raise
+        rules = []
+    rules = [r for r in rules if r["ID"] != rule_id]
+    rules.append({"ID": rule_id, "Filter": {"Prefix": prefix}, "Status": "Enabled",
+                  "Expiration": {"Days": days}})
+    client.put_bucket_lifecycle_configuration(Bucket=bucket, LifecycleConfiguration={"Rules": rules})

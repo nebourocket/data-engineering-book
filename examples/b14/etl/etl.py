@@ -16,8 +16,8 @@ from storage import make_client, write_partitions
 
 def main(env=None, client=None):
     env = os.environ if env is None else env
-    rows = [json.loads(line) for line in Path(env.get("INPUT_PATH", "/data/events.jsonl"))
-            .read_text(encoding="utf-8").splitlines()]
+    lines = Path(env.get("INPUT_PATH", "/data/events.jsonl")).read_text(encoding="utf-8").splitlines()
+    rows = [json.loads(line) for line in lines if line.strip()]  # 空行は読み飛ばす
     client = client or make_client(env)
     bucket = env["BUCKET"]
     if env.get("CREATE_BUCKET") == "1":

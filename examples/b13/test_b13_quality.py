@@ -72,6 +72,7 @@ def test_gate_stops_on_error_and_notifies_warn(shop):
 
 
 def test_quarantine_then_gate_passes(shop):
+    shop.execute(QUERIES["make_events_ranked"])
     shop.execute(QUERIES["make_events_clean"])
     shop.execute(QUERIES["make_events_quarantine"])
     assert shop.execute(QUERIES["split_balance"]).fetchone() == (4040, 4000, 40)
@@ -180,3 +181,43 @@ def test_exercise_answers(shop):
     assert shop.execute(QUERIES["status_values_lowered"]).fetchall() == [(0,)]
     loose_late = quality.late_arrival("events", "event_time", "received_at", max_ratio=0.02)
     assert not quality.run_checks(shop, [loose_late], "r3")[0].passed
+
+
+def test_info_is_recorded_but_never_notifies_or_stops(shop):
+    info = quality.not_null("customers", "email", severity="info", max_ratio=0.0)
+    notices = []
+    results = quality.gate(shop, [info], "r1", notify=notices.append)
+    assert not results[0].passed and notices == []
+    assert shop.execute("SELECT severity, passed FROM dq_results").fetchall() == [("info", False)]
+
+
+def test_owner_is_shown_in_the_notice_and_saved(shop):
+    check = quality.not_null("customers", "email", severity="warn", max_ratio=0.0)
+    check = quality.Check(check.name, check.dimension, "warn", check.sql, 0.0, owner="会員登録チーム")
+    notices = []
+    quality.gate(shop, [check], "r1", notify=notices.append)
+    assert "会員登録チーム" in notices[0]
+    assert shop.execute("SELECT owner FROM dq_results").fetchone() == ("会員登録チーム",)
+
+
+def test_quarantine_ratio_check(shop):
+    shop.execute(QUERIES["make_events_ranked"])
+    shop.execute(QUERIES["make_events_quarantine"])
+    ok, ng = quality.run_checks(shop, [quality.quarantine_ratio("events_quarantine", "events", 0.02),
+                                       quality.quarantine_ratio("events_quarantine", "events", 0.005)], "r1")
+    assert (ok.passed, ng.passed) == (True, False) and ok.bad == 40
+
+
+def test_quote_in_accepted_values_does_not_break_sql(shop):
+    (r,) = quality.run_checks(shop, [quality.accepted_values("orders", "status", ["it's"])], "r1")
+    assert r.detail == "" and r.bad == 3000
+
+
+def test_exercise_price_and_clock_checks(shop):
+    import exercises
+
+    a, b = quality.run_checks(shop, [exercises.PRICE_MATCHES, exercises.RECEIVED_BEFORE_EVENT], "r1")
+    assert (a.bad, a.total, a.passed) == (0, 7469, True)
+    assert (b.bad, b.passed) == (0, True)
+    shop.execute("UPDATE order_items SET unit_price = unit_price + 1 WHERE order_id = 1 AND line_no = 1")
+    assert not quality.run_checks(shop, [exercises.PRICE_MATCHES], "r2")[0].passed

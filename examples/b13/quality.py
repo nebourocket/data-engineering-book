@@ -2,7 +2,8 @@
 
 確認（Check）は「悪い行の数 bad」と「見た行の数 total」を返す SQL 1 本で表します。
 bad / total が max_ratio 以下なら合格です。不合格のとき、severity が
-  "error" なら QualityError を投げて処理を止め、"warn" なら通知だけして先へ進みます。
+  "error" なら QualityError を投げて処理を止め、"warn" なら通知だけして先へ進み、
+  "info" なら結果を表に残すだけで通知もしません (傾向を見たい確認用)。
 SQL に埋める表名と列名は、このファイルに書いた信頼できる値だけを渡してください
 （利用者の入力を渡すと SQL インジェクションになります）。DuckDB で動かします。
 """
@@ -21,9 +22,10 @@ from neboske_shop import write_duckdb  # noqa: E402
 class Check:
     name: str
     dimension: str  # 完全性・一意性・鮮度など
-    severity: str  # "error" か "warn"
+    severity: str  # "error" か "warn" か "info"
     sql: str  # 1 行 2 列 (bad, total) を返す SELECT
     max_ratio: float = 0.0
+    owner: str = ""  # 通知に添える持ち主 (チーム名など)
 
 
 class QualityError(Exception):
@@ -43,7 +45,8 @@ def unique(table, column, severity="error", max_ratio=0.0):
 
 
 def accepted_values(table, column, values, severity="error", max_ratio=0.0):
-    listed = ", ".join(f"'{v}'" for v in values)
+    # 値に ' が含まれると SQL が壊れるので '' に直す (値もコードに書いた信頼できるものだけを渡す)
+    listed = ", ".join("'" + str(v).replace("'", "''") + "'" for v in values)
     return Check(f"{table}.{column}_accepted_values", "正確さ", severity,
                  f"SELECT count(*) FILTER (WHERE {column} NOT IN ({listed})), count(*) FROM {table} "
                  f"WHERE {column} IS NOT NULL", max_ratio)
@@ -88,13 +91,20 @@ def volume_zscore(table, column, day, z_max=3.0, severity="warn"):
         FROM today, base""")
 
 
-def schema_matches(table, expected, severity="error"):
+def quarantine_ratio(quarantine_table, source_table, max_ratio, severity="warn"):
+    # 隔離した行が元の行の何割か。急に増えたら、上流で何かが起きている。
+    return Check(f"{quarantine_table}_ratio", "完全性", severity,
+                 f"SELECT (SELECT count(*) FROM {quarantine_table}), (SELECT count(*) FROM {source_table})",
+                 max_ratio)
+
+
+def schema_matches(table, expected, severity="error", schema="main"):
     # expected は {列名: 型名}。足りない列・型の違う列・余計な列の数が bad。
     pairs = ", ".join(f"('{c}', '{t}')" for c, t in expected.items())
     return Check(f"{table}_schema", "スキーマ", severity, f"""
         WITH want(column_name, data_type) AS (VALUES {pairs}),
         have AS (SELECT column_name, data_type FROM information_schema.columns
-                 WHERE table_name = '{table}')
+                 WHERE table_name = '{table}' AND table_schema = '{schema}')
         SELECT (SELECT count(*) FROM want WHERE (column_name, data_type) NOT IN
                     (SELECT column_name, data_type FROM have))
              + (SELECT count(*) FROM have WHERE column_name NOT IN
@@ -109,14 +119,17 @@ class Result:
     passed: bool
     detail: str = ""
 
+    @property
+    def ratio(self):
+        return self.bad / self.total if self.total else 0.0
+
 
 def _evaluate(con, check):
     try:
         bad, total = con.execute(check.sql).fetchone()
     except duckdb.Error as e:  # 測れなかった確認は不合格にする
         return Result(check, 0, 0, False, f"{type(e).__name__}: {str(e).splitlines()[0]}")
-    ratio = bad / total if total else 0.0
-    return Result(check, bad, total, ratio <= check.max_ratio)
+    return Result(check, bad, total, (bad / total if total else 0.0) <= check.max_ratio)
 
 
 def run_checks(con, checks, run_id, now=None):
@@ -125,14 +138,13 @@ def run_checks(con, checks, run_id, now=None):
     con.execute("""
         CREATE TABLE IF NOT EXISTS dq_results (
             run_id VARCHAR, run_at TIMESTAMPTZ, check_name VARCHAR, dimension VARCHAR,
-            severity VARCHAR, bad BIGINT, total BIGINT, ratio DOUBLE, max_ratio DOUBLE,
+            severity VARCHAR, owner VARCHAR, bad BIGINT, total BIGINT, ratio DOUBLE, max_ratio DOUBLE,
             passed BOOLEAN, detail VARCHAR)""")
     results = [_evaluate(con, c) for c in checks]
     for r in results:
-        ratio = r.bad / r.total if r.total else 0.0
-        con.execute("INSERT INTO dq_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        con.execute("INSERT INTO dq_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [run_id, now, r.check.name, r.check.dimension, r.check.severity,
-                     r.bad, r.total, ratio, r.check.max_ratio, r.passed, r.detail])
+                     r.check.owner, r.bad, r.total, r.ratio, r.check.max_ratio, r.passed, r.detail])
     return results
 
 
@@ -142,7 +154,8 @@ def gate(con, checks, run_id, notify=print, now=None):
     failed = [r for r in results if not r.passed]
     for r in failed:
         if r.check.severity == "warn":
-            notify(f"[WARN] {r.check.name}: {r.bad}/{r.total} {r.detail}".rstrip())
+            owner = f" (持ち主: {r.check.owner})" if r.check.owner else ""
+            notify(f"[WARN] {r.check.name}: {r.bad}/{r.total} {r.detail}{owner}".rstrip())
     errors = [r for r in failed if r.check.severity == "error"]
     if errors:
         names = ", ".join(r.check.name for r in errors)
@@ -150,10 +163,15 @@ def gate(con, checks, run_id, notify=print, now=None):
     return results
 
 
-def shop_checks(table_suffix="", as_of="2026-07-02 00:00:00"):
-    """ねぼすけ商店の確認一覧。table_suffix="_clean" で隔離後の events を確かめます。"""
+def shop_checks(table_suffix="", as_of="2026-07-02 00:00:00", day="2026-06-20", rows=(3500, 4500)):
+    """ねぼすけ商店の確認一覧。table_suffix="_clean" で隔離後の events を確かめます。
+
+    as_of (鮮度の「今」)・day (件数の Z スコアを見る日)・rows (件数の範囲) は、サンプルデータに
+    合わせた値です。本番では実行日の時刻と日付を渡し、範囲は過去の実績から決めます。
+    """
     ev = f"events{table_suffix}"
-    return [
+    extra = [quarantine_ratio("events_quarantine", "events", max_ratio=0.02)] if table_suffix else []
+    return extra + [
         not_null("customers", "customer_id"),
         not_null("customers", "email", severity="warn", max_ratio=0.02),
         unique("customers", "email", severity="warn"),
@@ -164,9 +182,9 @@ def shop_checks(table_suffix="", as_of="2026-07-02 00:00:00"):
         relationships("order_items", "product_id", "products", "product_id"),
         unique(ev, "event_id"),
         freshness(ev, "received_at", max_lag_hours=48, as_of=as_of),
-        late_arrival(ev, "event_time", "received_at", max_ratio=0.05),
-        row_count_between(ev, 3500, 4500),
-        volume_zscore(ev, "event_time", day="2026-06-20"),
+        late_arrival(ev, "event_time", "received_at", max_ratio=0.05, severity="info"),
+        row_count_between(ev, *rows),
+        volume_zscore(ev, "event_time", day=day),
         schema_matches("customers", {"customer_id": "BIGINT", "name": "VARCHAR", "email": "VARCHAR",
                                      "prefecture": "VARCHAR", "registered_at": "VARCHAR"}),
     ]

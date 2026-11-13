@@ -1,10 +1,16 @@
 # 第 14 章で打つコマンド (リポジトリの直下で流す。docker が使える端末が必要)
+# MinIO を起動して、準備ができるまで待つ (リポジトリの直下で)
+docker compose up -d --wait
+
 # 入力を作り、ETL のイメージをビルドして、MinIO (localhost:9000) に向けて流す
 python examples/b14/make_input.py examples/b14/data/events.jsonl
 docker build -t neboske-etl:dev examples/b14/etl
 docker run --rm --network host -v "$PWD/examples/b14/data":/data:ro \
   -e S3_ENDPOINT=http://localhost:9000 -e S3_ACCESS_KEY=minioadmin -e S3_SECRET_KEY=minioadmin \
   -e BUCKET=lake-demo -e CREATE_BUCKET=1 neboske-etl:dev
+
+# 後片付け (リポジトリの直下で)。データごと消すときは down -v
+docker compose down
 
 # コンテナの中のユーザーを確かめる
 docker run --rm --entrypoint id neboske-etl:dev

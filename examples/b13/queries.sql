@@ -62,23 +62,24 @@ FROM scored
 WHERE abs((n - mu) / sd) > 3
 ORDER BY d;
 
+-- name: make_events_ranked
+-- 同じ event_id の中で、先に届いた順 (同じなら rowid 順) に 1, 2, ... と番号を付ける。
+-- rowid は DuckDB の行番号 (PostgreSQL なら ctid)。番号が必ず一意に決まるようにするために使う。
+CREATE OR REPLACE TABLE events_ranked AS
+SELECT *, row_number() OVER (PARTITION BY event_id ORDER BY received_at, rowid) AS rn
+FROM events;
+
 -- name: make_events_clean
 CREATE OR REPLACE TABLE events_clean AS
 SELECT event_id, customer_id, event_type, event_time, received_at
-FROM (
-    SELECT *, row_number() OVER (PARTITION BY event_id ORDER BY received_at) AS rn
-    FROM events
-)
+FROM events_ranked
 WHERE rn = 1;
 
 -- name: make_events_quarantine
 CREATE OR REPLACE TABLE events_quarantine AS
 SELECT event_id, customer_id, event_type, event_time, received_at,
        'duplicate_event_id' AS reason
-FROM (
-    SELECT *, row_number() OVER (PARTITION BY event_id ORDER BY received_at) AS rn
-    FROM events
-)
+FROM events_ranked
 WHERE rn > 1;
 
 -- name: split_balance

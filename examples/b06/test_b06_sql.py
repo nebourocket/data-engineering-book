@@ -122,7 +122,7 @@ def test_duckdb_index_scan():
     assert "Index Scan" in after and "Row Groups Scanned: 0 / 17" in after
     # EXPLAIN だけでは Seq Scan と出る。実際に使われたかは EXPLAIN ANALYZE で見る
     assert "Sequential Scan" in first_cell(con, q["plan_after"])
-    # 並べて置いた表は、索引がなくても行グループを読み飛ばせる
+    # 並べて置いた表は、インデックスがなくても行グループを読み飛ばせる
     con.execute(q["sorted_setup"])
     assert "Row Groups Scanned: 1 / 17" in first_cell(con, q["sorted_scan"])
     cols = first_cell(con, q["columns_read"])
@@ -142,10 +142,10 @@ def test_postgres_index_changes_plan(pg_dsn):
         assert plan("plan_before").startswith("Seq Scan on big")
         con.execute(q["create_index"])
         assert plan("plan_after").startswith("Index Scan using big_id on big")
-        # 行の大半を読む条件では、索引があっても全件走査を選ぶ
+        # 行の大半を読む条件では、インデックスがあっても全件走査を選ぶ
         con.execute(q["create_index_grp"])
         assert plan("plan_low_selectivity").startswith("Seq Scan on big")
-        # 約 0.1% の行を読む条件なら、grp の索引を使う
+        # 約 0.1% の行を読む条件なら、grp のインデックスを使う
         assert "big_grp" in plan("plan_high_selectivity")
 
 

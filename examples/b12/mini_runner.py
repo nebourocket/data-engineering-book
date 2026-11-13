@@ -12,8 +12,11 @@ def run(tasks: dict[str, Callable[[], None]], deps: dict[str, set[str]]) -> dict
 
     状態は success / failed / upstream_failed のどれかです。
     先のタスクが成功していなければ動かさず（upstream_failed）、関係のない枝は動かし続けます。
-    輪になった依存（A→B→A）は graphlib.CycleError になります。
+    輪になった依存（A→B→A）は graphlib.CycleError、tasks にない名前が deps にあれば ValueError です。
     """
+    unknown = (set(deps) | {d for ds in deps.values() for d in ds}) - set(tasks)
+    if unknown:  # 名前の書き間違いは、動かす前に分かるようにする
+        raise ValueError(f"tasks にない名前が deps にあります: {sorted(unknown)}")
     graph = {name: deps.get(name, set()) for name in tasks}
     state: dict[str, str] = {}
     for name in TopologicalSorter(graph).static_order():

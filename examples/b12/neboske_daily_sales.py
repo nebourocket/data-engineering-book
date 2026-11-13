@@ -4,33 +4,45 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-from airflow.decorators import dag, task
+from airflow.sdk import dag, task
+from airflow.timetables.interval import CronDataIntervalTimetable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import daily_job  # noqa: E402
 
 WORK = Path(os.environ.get("NEBOSKE_WORK", "/tmp/neboske"))
-SOURCE = WORK / "source" / "sales.csv"
+SOURCE = WORK / "source"
 OUT = WORK / "out"
+TZ = "Asia/Tokyo"  # 日付の区切りに使うタイムゾーン（元データの日付は日本時間）
+
+
+def day_of(data_interval_start: datetime) -> str:
+    """処理する日（区間の始まりの日付）を '2026-03-05' の形にする。
+
+    data_interval_start は UTC で渡ってくるので、スケジュールと同じタイムゾーンに直してから日付にする。
+    """
+    return data_interval_start.astimezone(ZoneInfo(TZ)).strftime("%Y-%m-%d")
 
 
 def notify_failure(context) -> None:
     """失敗を通知する場所。ここではログに書くだけです（実際はチャットやメールに送ります）。"""
     ti = context["task_instance"]
-    logging.getLogger(__name__).error("失敗: %s / %s (論理日付 %s)", ti.dag_id, ti.task_id, context["ds"])
+    logging.getLogger(__name__).error("失敗: %s / %s", ti.dag_id, ti.task_id)
 
 
 @task.sensor(poke_interval=300, timeout=6 * 60 * 60, mode="reschedule")
-def wait_for_source(ds=None) -> bool:
-    """その日の元データが届くまで待つ。待っている間はワーカーを空けておく（reschedule）。"""
-    return daily_job.source_has_day(ds, SOURCE)
+def wait_for_source(data_interval_start=None) -> bool:
+    """その日の元データの完了の印（_SUCCESS）が届くまで待つ。待っている間はワーカーを空けておく（reschedule）。"""
+    return daily_job.source_ready(day_of(data_interval_start), SOURCE)
 
 
 @task
-def build(ds=None) -> dict:
+def build(data_interval_start=None) -> dict:
     """その日の分だけを作り直す。同じ日を再実行しても、結果は変わらない。"""
-    return {"day": ds, "rows": daily_job.process(ds, SOURCE, OUT)}
+    day = day_of(data_interval_start)
+    return {"day": day, "rows": daily_job.process(day, SOURCE, OUT)}
 
 
 @task
@@ -41,7 +53,7 @@ def report(result: dict) -> None:
 
 @dag(
     dag_id="neboske_daily_sales",
-    schedule="@daily",
+    schedule=CronDataIntervalTimetable("0 0 * * *", timezone=TZ),
     start_date=datetime(2026, 1, 1),
     catchup=False,
     max_active_runs=1,

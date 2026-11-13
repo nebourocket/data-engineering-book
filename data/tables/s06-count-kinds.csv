@@ -1,0 +1,4 @@
+書き方,数えるもの,customers での結果
+count(*),行の数,4
+count(email),email が NULL でない行の数,3
+count(points),points が NULL でない行の数,3

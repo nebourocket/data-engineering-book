@@ -79,6 +79,23 @@ EXPECT = {
 }
 
 
+EXERCISES = run_sql.split_queries((HERE / "exercises.sql").read_text(encoding="utf-8"))
+
+
+def test_exercise_answers(con):
+    """練習問題の解答例が、本文で言っている結果になります。"""
+    def rows(name):
+        return con.execute(EXERCISES[name]).fetchall()
+
+    assert rows("ex1") == [(3, 11800)]
+    assert rows("ex2") == [(1, 3200), (2, 5800), (3, 2800)]
+    assert rows("ex3") == [(2, 5800), (3, 5500)]
+    assert rows("ex4") == [("佐藤 太郎", 101, 3200), ("佐藤 太郎", 102, 900), ("高橋 健", 104, 1200),
+                           ("高橋 健", 105, 2800), ("高橋 健", 106, 1500)]
+    assert rows("ex5") == [("大阪", 1, 300.0), ("東京", 2, 100.0), ("石川", 1, 200.0)]
+    assert rows("ex6") == [(103, 5800)]
+
+
 def test_every_query_has_an_expectation():
     assert set(QUERIES) == set(EXPECT) | set(ERROR_NAMES)
 

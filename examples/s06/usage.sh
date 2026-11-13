@@ -3,3 +3,4 @@ DEV python examples/s05/run_sql.py shop.duckdb examples/s06/setup.sql
 DEV python examples/s05/run_sql.py shop.duckdb examples/s06/queries.sql aggregates
 DEV python examples/s05/run_sql.py shop.duckdb examples/s06/queries.sql group_by
 rm shop.duckdb
+DEV python examples/s05/run_sql.py shop.duckdb try.sql

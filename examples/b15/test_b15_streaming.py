@@ -57,7 +57,7 @@ def test_commit_after_processing_means_rerun_adds_nothing(kafka_bootstrap, topic
     events = make_stream_events()
     produce_events(kafka_bootstrap, topic, events)
     sink, group = open_sink(), unique("g")
-    assert consume(kafka_bootstrap, topic, group, sink, commit=True, expected=len(events)) == 205
+    assert consume(kafka_bootstrap, topic, group, sink, commit=True, expected=len(events), idle_seconds=30) == 205
     # 「0 件」がグループ参加の遅れのせいでないことを、ブローカーに記録されたコミット位置で確かめる (ラグ 0)
     assert committed_total(kafka_bootstrap, topic, group) == 205
     assert sink.execute("SELECT count(*) FROM events_sink").fetchone() == (200,)  # 再送 5 件は上書きされた
@@ -65,7 +65,7 @@ def test_commit_after_processing_means_rerun_adds_nothing(kafka_bootstrap, topic
     assert committed_total(kafka_bootstrap, topic, group) == 205
     assert sink.execute("SELECT count(*) FROM events_sink").fetchone() == (200,)
     # 別のグループ名で読むと先頭から全部届くが、event_id で上書きなので行数は変わらない
-    assert consume(kafka_bootstrap, topic, unique("g"), sink, commit=True, expected=len(events)) == 205
+    assert consume(kafka_bootstrap, topic, unique("g"), sink, commit=True, expected=len(events), idle_seconds=30) == 205
     assert sink.execute("SELECT count(*) FROM events_sink").fetchone() == (200,)
     assert minute_counts(sink) == [(m, 40) for m, _ in minute_counts(sink)]
     assert len(minute_counts(sink)) == 5
@@ -76,7 +76,7 @@ def test_without_commit_messages_are_redelivered_but_sink_stays_correct(kafka_bo
     produce_events(kafka_bootstrap, topic, events)
     sink, group = open_sink(), unique("g")
     for _ in range(2):
-        assert consume(kafka_bootstrap, topic, group, sink, commit=False, expected=len(events)) == 205
+        assert consume(kafka_bootstrap, topic, group, sink, commit=False, expected=len(events), idle_seconds=30) == 205
         assert committed_total(kafka_bootstrap, topic, group) == 0  # コミットしていないので記録も無い
     assert sink.execute("SELECT count(*) FROM events_sink").fetchone() == (200,)  # event_id で上書きなので増えない
     assert sink.execute("SELECT sum(views) FROM naive_counts").fetchone() == (410,)  # 足し込み方式は 2 倍になる

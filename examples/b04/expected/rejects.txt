@@ -1,0 +1,5 @@
+order_id,customer_id,ordered_at,status,item_count,total_amount,error
+11,398,2026-03-25 20:34:47,delivered,4,-500,total_amount: 0 以上でなければなりません: -500
+21,338,2026-13-45,placed,1,6150,ordered_at: 日時として読めません: '2026-13-45'
+31,421,2026-02-21 03:54:15,returned,3,34350,status: 知らない値です: 'returned'
+abc,372,2026-05-03 18:22:31,delivered,2,31350,order_id: 整数ではありません: 'abc'

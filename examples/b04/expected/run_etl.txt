@@ -1,0 +1,13 @@
+3000 行を書きました
+2026-11-13 01:12:43,800 INFO neboske_etl.pipeline 開始: /tmp/orders.csv (バッチ 1000 行)
+2026-11-13 01:12:43,837 INFO neboske_etl.pipeline 完了: 読み込み 3000 行、書き込み 2996 行、除外 4 行
+2026-11-13 01:12:44,038 INFO neboske_etl.pipeline 開始: /tmp/orders.csv (バッチ 1000 行)
+2026-11-13 01:12:44,045 DEBUG neboske_etl.pipeline 行を除外: total_amount: 0 以上でなければなりません: -500
+2026-11-13 01:12:44,045 DEBUG neboske_etl.pipeline 行を除外: ordered_at: 日時として読めません: '2026-13-45'
+2026-11-13 01:12:44,045 DEBUG neboske_etl.pipeline 行を除外: status: 知らない値です: 'returned'
+2026-11-13 01:12:44,045 DEBUG neboske_etl.pipeline 行を除外: order_id: 整数ではありません: 'abc'
+2026-11-13 01:12:44,074 INFO neboske_etl.pipeline 完了: 読み込み 3000 行、書き込み 2996 行、除外 4 行
+2026-11-13 01:12:44,265 INFO neboske_etl.pipeline 開始: /tmp/orders.csv (バッチ 1000 行)
+2026-11-13 01:12:44,300 INFO neboske_etl.pipeline 完了: 読み込み 3000 行、書き込み 2996 行、除外 4 行
+2026-11-13 01:12:44,300 ERROR neboske_etl 除外が多すぎます: 0.13% (上限 0.01%)
+終了コード: 1

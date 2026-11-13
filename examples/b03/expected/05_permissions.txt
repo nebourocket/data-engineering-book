@@ -1,0 +1,5 @@
+-rw-r--r-- 644
+05_permissions.sh: line 10: ./hello.sh: Permission denied
+終了コード: 126
+-rwxr--r-- 744
+hello

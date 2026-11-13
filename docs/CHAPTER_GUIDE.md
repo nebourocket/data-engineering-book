@@ -41,7 +41,12 @@
 - 言語の指定は必須です。検査する言語は `python` `sql` `bash` `yaml` `toml` `dockerfile` `ini` `json` です。別名は次のとおり正規化されます: `py`→python、`sh` `shell` `zsh`→bash、`yml`→yaml、`docker`→dockerfile、`postgresql` `pgsql` `psql`→sql、`{.python}` の形も可。
 - `console` は bash として検査しますが、`$ ` で始まる行（と行末 `\` で続く行）だけが対象で、その後の出力行は無視されます。
 - 構文も確かめます（一致するだけでは、末尾が欠けたブロックも通ってしまうため）。`python` は `ast.parse`、`bash`（`console` の `$ ` 行を含む）は `bash -n`、`json` は `json.loads`、`yaml` は PyYAML があれば読み込めることが必要です（python と bash は全体が同じ幅でインデントされた断片なら、インデントを外して確かめます）。`sql` `toml` `dockerfile` `ini` は構文を確かめません。
-- 途中から始まる・途中で終わる抜粋は、info 文字列に `excerpt` を付けると構文検査だけ免除されます（例: ```` ```python title="load.py" excerpt ````）。examples との一致は引き続き必要です。
+- 途中から始まる・途中で終わる抜粋は、info 文字列に `excerpt` を付けると、構文検査と下の「丸ごと」検査が免除されます（例: ```` ```python title="load.py" excerpt ````）。examples との一致は引き続き必要です。
+- 「丸ごと」検査（`excerpt` が無いブロックだけ。末尾の行が欠けても部分文字列として一致してしまうため）:
+    - `.py` に一致する `python` ブロックは、そのファイルの連続する完全な文でなければなりません。def・class・with・for・if などの本体の文でも構いません（インデントは外して比べます）。文の直前のコメント行は、写しても省いてもかまいません。
+    - `.py` に一致する `sql` ブロックは、文字列定数 1 つの全体でなければなりません（`"""` をまたぐ切り出しは不可）。f-string は `{...}` を書かれたまま比べます。`.sql` ファイルに一致する場合は従来どおり部分一致です。
+    - `.sh` に一致する `bash` ブロックは、連続する完全な行でなければなりません（行の途中からは不可）。
+    - 通らないときは、関数・文を丸ごと写すか、フェンスに `excerpt` を付けます。
 - 検査の対象外は `text` `mermaid` `output` だけです。言語の指定がない、または上に無い言語（例: rust）のブロックはエラーです。コードブロックを閉じ忘れてもエラーです。
 - 共通の題材は架空の「ねぼすけ商店」です（`examples/common/neboske_shop.py`）。顧客・商品・注文・明細・行動ログを作り、重複・欠損・遅延といった欠陥を意図的に含みます。`write_duckdb` と `write_parquet` で書き出せます。
 - PostgreSQL・MinIO・Redpanda が要るコードは `examples/conftest.py` のフィクスチャ（`pg_dsn` `s3_client` `kafka_bootstrap`）で試します。

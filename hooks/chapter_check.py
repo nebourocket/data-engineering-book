@@ -200,8 +200,9 @@ def check_chapter(path, *, examples_dir, tables_dir, glossary, length_range, pre
         ex_dir = Path(examples_dir) / f"{prefix}{num.group(1)}"
         files = []
         if ex_dir.is_dir():
-            files = [_norm(f.read_text(encoding="utf-8", errors="ignore"))
+            files = [(f, f.read_text(encoding="utf-8", errors="ignore"))
                      for f in sorted(ex_dir.rglob("*")) if f.is_file()]
+            files = [(f, raw, _norm(raw)) for f, raw in files]
         for indent, info, raw in blocks:
             lang = _lang(info)
             if not lang:
@@ -217,9 +218,15 @@ def check_chapter(path, *, examples_dir, tables_dir, glossary, length_range, pre
                 continue
             if code.strip() and not _is_excerpt(info) and (msg := _syntax_error(lang, code)):
                 errors.append(f"コード: {lang} のブロックの構文が正しくありません（途中で切れた抜粋なら info に excerpt を付けます）: {msg}")
+            code_raw = code
             code = _norm(code)
-            if code and not any(_contains(f, code) for f in files):
+            hits = [(f, raw) for f, raw, norm in files if _contains(norm, code)] if code else []
+            if code and not hits:
                 errors.append(f"コード: {lang} のブロックが {label} の 1 つのファイルにありません: {code[:40]}…")
+            elif hits and not _is_excerpt(info):
+                msg = _whole_node_error(lang, textwrap.dedent(code_raw), code, hits)
+                if msg:
+                    errors.append(msg)
     return errors
 
 
@@ -228,3 +235,93 @@ def _contains(file_text: str, code: str) -> bool:
     if len(code) >= SHORT_BLOCK:
         return code in file_text
     return re.search(rf"(?<!\S){re.escape(code)}(?!\S)", file_text) is not None
+
+
+_WHOLE_HINT = "関数・文を丸ごと写すか、フェンスの info に excerpt を付けてください"
+
+
+def _whole_node_error(lang: str, code_raw: str, code: str, hits) -> str | None:
+    """一致したファイルのどれかで「丸ごと」写せていれば None、どれでもなければ誤りを返します。
+
+    .py の python は連続する完全な文、.py の sql は 1 つの文字列定数、.sh の bash は連続する完全な行が対象です。
+    それ以外の拡張子は従来どおり部分文字列の一致だけを求めます。
+    """
+    rule = {"python": (".py", _python_whole, "連続する完全な文"),
+            "sql": (".py", _sql_whole, "文字列定数 1 つの全体"),
+            "bash": (".sh", _bash_whole, "連続する完全な行")}.get(lang)
+    if not rule:
+        return None
+    suffix, check, what = rule
+    targets = [(f, raw) for f, raw in hits if f.suffix == suffix]
+    if len(targets) < len(hits) or not targets:
+        return None  # 他の種類のファイルにも一致するなら従来の規則で足ります
+    if any(check(raw, code_raw, code) for _, raw in targets):
+        return None
+    names = ", ".join(f.name for f, _ in targets)
+    return (f"コード: {lang} のブロックが {names} の{what}になっていません（途中で切れています）: {code[:40]}…"
+            f"（{_WHOLE_HINT}）")
+
+
+MAX_FULL_SLICES = 200
+
+
+def _python_whole(source: str, code_raw: str, code: str) -> bool:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return True  # 元ファイルが読めないなら別の検査に任せます
+    lines = source.split("\n")
+    first = _norm(next((ln for ln in code_raw.split("\n") if ln.strip()), ""))
+    for node in ast.walk(tree):
+        for attr in ("body", "orelse", "finalbody"):
+            stmts = getattr(node, attr, None)
+            if not isinstance(stmts, list) or not stmts or not isinstance(stmts[0], ast.stmt):
+                continue
+            spans, starts = [], []
+            for st in stmts:
+                top = min([st.lineno] + [d.lineno for d in getattr(st, "decorator_list", [])])
+                spans.append((top, st.end_lineno))
+                starts.append(top)
+            for i, top0 in enumerate(starts):
+                # 文の直前のコメント行は、写してもしなくてもよい
+                tops = [top0]
+                while tops[-1] > 1 and lines[tops[-1] - 2].lstrip().startswith("#"):
+                    tops.append(tops[-1] - 1)
+                for top in tops:
+                    if len(spans) > MAX_FULL_SLICES and _norm(lines[top - 1]) != first:
+                        continue
+                    for j in range(i, len(spans)):
+                        text = _norm("\n".join(lines[top - 1:spans[j][1]]))
+                        if text == code:
+                            return True
+                        if len(text) > len(code):
+                            break
+    return False
+
+
+def _sql_whole(source: str, code_raw: str, code: str) -> bool:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return True
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if _norm(node.value) == code:
+                return True
+        elif isinstance(node, ast.JoinedStr):
+            parts = []
+            for v in node.values:
+                if isinstance(v, ast.Constant):
+                    parts.append(str(v.value))
+                else:
+                    parts.append("{" + (ast.get_source_segment(source, v.value) or "") + "}")
+            if _norm("".join(parts)) == code:
+                return True
+    return False
+
+
+def _bash_whole(source: str, code_raw: str, code: str) -> bool:
+    want = [_norm(ln) for ln in code_raw.split("\n") if ln.strip()]
+    have = [_norm(ln) for ln in source.split("\n") if ln.strip()]
+    n = len(want)
+    return any(have[i:i + n] == want for i in range(len(have) - n + 1))

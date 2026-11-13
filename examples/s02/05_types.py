@@ -1,0 +1,8 @@
+print(type(42))
+print(type(3.14))
+print(type("42"))
+print(int("42") + 1)
+print(str(42) + "円")
+print(float("1.5") * 2)
+print(int(3.9))
+print("42" + "1")

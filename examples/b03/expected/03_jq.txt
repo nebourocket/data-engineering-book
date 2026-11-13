@@ -1,0 +1,16 @@
+--- 購入したお客さんの ID
+343
+--- イベントの種類ごとの件数
+      6 view
+      1 purchase
+      1 add_to_cart
+--- 配信の遅れ (秒) が 10 秒を超えたもの
+{"event_id":1340,"delay":15}
+{"event_id":2155,"delay":29}
+{"event_id":3742,"delay":11}
+{"event_id":1996,"delay":25}
+{"event_id":1549,"delay":15}
+--- CSV に変える
+1340,343,"purchase"
+3393,91,"view"
+2155,200,"view"

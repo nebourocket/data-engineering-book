@@ -1,0 +1,11 @@
+data
+data/clean
+data/raw
+60
+2026-11-02T09:05:17+09:00 GET /products/12 304 21 customer=22
+2026-11-02T09:05:36+09:00 POST /cart 200 16 customer=25
+2026-11-02T09:09:34+09:00 GET /products/12 200 45 customer=4
+2026-11-02T11:58:04+09:00 GET /products/12 200 22 customer=17
+2026-11-02T11:59:16+09:00 GET /products/7 500 19 customer=14
+access-20261102.log
+0

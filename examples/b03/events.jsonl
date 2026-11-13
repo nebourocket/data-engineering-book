@@ -1,0 +1,8 @@
+{"event_id": 1340, "customer_id": 343, "event_type": "purchase", "event_time": "2026-01-01 00:16:45", "received_at": "2026-01-01 00:17:00"}
+{"event_id": 3393, "customer_id": 91, "event_type": "view", "event_time": "2026-01-01 02:07:14", "received_at": "2026-01-01 02:07:20"}
+{"event_id": 2155, "customer_id": 200, "event_type": "view", "event_time": "2026-01-01 02:37:14", "received_at": "2026-01-01 02:37:43"}
+{"event_id": 3742, "customer_id": 438, "event_type": "add_to_cart", "event_time": "2026-01-01 03:54:55", "received_at": "2026-01-01 03:55:06"}
+{"event_id": 1076, "customer_id": 250, "event_type": "view", "event_time": "2026-01-01 04:33:41", "received_at": "2026-01-01 04:33:51"}
+{"event_id": 1996, "customer_id": 465, "event_type": "view", "event_time": "2026-01-01 05:52:57", "received_at": "2026-01-01 05:53:22"}
+{"event_id": 1955, "customer_id": 213, "event_type": "view", "event_time": "2026-01-01 06:21:16", "received_at": "2026-01-01 06:21:25"}
+{"event_id": 1549, "customer_id": 228, "event_type": "view", "event_time": "2026-01-01 08:45:57", "received_at": "2026-01-01 08:46:12"}

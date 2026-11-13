@@ -42,6 +42,8 @@ jobs:
       - run: >
           pip install "apache-airflow==2.10.5"
           --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.5/constraints-3.12.txt"
+      # 12 章の DAG が import する duckdb（requirements.txt と同じ版）。
+      - run: pip install "duckdb==2.0.0"
       - run: |
           python - <<'PY'
           from airflow.models import DagBag

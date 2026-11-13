@@ -16,12 +16,12 @@
 ```
 
 - ファイル名は `book/basics/NN-英語のスラッグ.md`（固定。`mkdocs.yml` の nav と `basics/index.md` に登録済み）。
-- 仮ページは front matter に `status: draft` を付けます。draft は構成・長さ・コードの検査を免除され、表と表記の検査だけ受けます。書き終えたら `status: draft` を消します。
+- 仮ページは front matter に `status: draft` を付けます。draft は構成・長さ・コードの検査を免除されますが、表（手書き表の禁止・CSV の存在）と用語表記（glossary）の検査は draft にも適用されます。書き終えたら `status: draft` を消します。
 - 章末に関連する応用編があれば、最後の本文として「さらに深く: 応用編 第N章 『…』」の 1 行を置きます。
 
 ## 長さ
 
-コードブロックと表の差し込み（`{{ table(...) }}`）を除いた本文で、基礎編は 7,000〜14,000 字（空白を数えません）。応用編は 10,000〜20,000 字で、範囲は `hooks/chapter_check.py` の引数で変えられます。
+数えるのは、front matter とコードブロック（囲いごと）と `{{ table(...) }}` の差し込みを除いた本文の、空白・改行を除いた文字数です。見出し・箇条書き・練習問題と解答例の文章は数えます。基礎編は 7,000〜14,000 字、応用編は 10,000〜20,000 字で、範囲は `hooks/chapter_check.py` の引数で変えられます。
 
 ## 表
 
@@ -36,8 +36,10 @@
 
 ## コード
 
-- 本文の `python` `sql` `bash` `yaml` `toml` `dockerfile` `ini` のコードブロックは、すべて `examples/bNN/`（NN は章番号）のどれかのファイルに、空白を無視して含まれていなければなりません。先に examples に置いて動かし、そこから本文へ写します。
-- 出力例などは ```` ```text ````、図は ```` ```mermaid ```` を使うと検査の対象外になります。
+- 本文のコードブロックは、`examples/bNN/`（NN は章番号）のどれか 1 つのファイルに、空白を無視してそのまま含まれていなければなりません（複数ファイルにまたがる一致は認めません）。20 文字未満の短いブロックは、前後が空白の語として一致する必要があります。先に examples に置いて動かし、そこから本文へ写します。
+- 言語の指定は必須です。検査する言語は `python` `sql` `bash` `yaml` `toml` `dockerfile` `ini` `json` です。別名は次のとおり正規化されます: `py`→python、`sh` `shell` `zsh`→bash、`yml`→yaml、`docker`→dockerfile、`postgresql` `pgsql` `psql`→sql、`{.python}` の形も可。
+- `console` は bash として検査しますが、`$ ` で始まる行（と行末 `\` で続く行）だけが対象で、その後の出力行は無視されます。
+- 検査の対象外は `text` `mermaid` `output` だけです。言語の指定がない、または上に無い言語（例: rust）のブロックはエラーです。コードブロックを閉じ忘れてもエラーです。
 - 共通の題材は架空の「ねぼすけ商店」です（`examples/common/neboske_shop.py`）。顧客・商品・注文・明細・行動ログを作り、重複・欠損・遅延といった欠陥を意図的に含みます。`write_duckdb` と `write_parquet` で書き出せます。
 - PostgreSQL・MinIO・Redpanda が要るコードは `examples/conftest.py` のフィクスチャ（`pg_dsn` `s3_client` `kafka_bootstrap`）で試します。
 

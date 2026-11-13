@@ -13,10 +13,21 @@ ADVANCED_RANGE = (10000, 20000)
 FIRST_H2 = "この章でできるようになること"
 LAST_H2 = ["よくある失敗", "まとめ", "練習問題", "参考文献"]
 MIN_EXERCISES = 3
-CHECKED_LANGS = {"python", "sql", "bash", "yaml", "toml", "dockerfile", "ini"}
+# 検査するコードブロックの言語（別名は ALIASES で正規化します）。
+CHECKED_LANGS = {"python", "sql", "bash", "yaml", "toml", "dockerfile", "ini", "json"}
+ALIASES = {
+    "py": "python", "python3": "python",
+    "sh": "bash", "shell": "bash", "zsh": "bash",
+    "yml": "yaml", "docker": "dockerfile",
+    "postgresql": "sql", "pgsql": "sql", "psql": "sql",
+}
+# 出力や図なので examples との一致を求めない言語。
+EXEMPT_LANGS = {"text", "mermaid", "output"}
+# 短いブロックは、前後が空白（または端）の語としてだけ一致を認めます。
+SHORT_BLOCK = 20
 
 TABLE_PLACEHOLDER_RE = re.compile(r'\{\{\s*table\("([a-z0-9-]+)"\)\s*\}\}')
-FENCE_RE = re.compile(r"^([ \t]*)(`{3,}|~{3,})[ \t]*([^\s`]*)[^\n]*\n(.*?)^\1\2[ \t]*$", re.M | re.S)
+FENCE_OPEN_RE = re.compile(r"^([ \t]*)(`{3,}|~{3,})[ \t]*(.*?)\s*$")
 FRONT_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$|^\s*\|\s*:?-{3,}:?\s*\|?\s*$")
 
@@ -38,8 +49,60 @@ def load_glossary(path: Path) -> list[tuple[str, str]]:
         return [(r["正"], r["誤"]) for r in csv.DictReader(f)]
 
 
+def parse_fences(body: str):
+    """本文を (prose, blocks, errors) に分けます。
+
+    prose はコードブロックを除いた本文。blocks は (indent, info, code) の一覧。
+    閉じ側の囲いは開きと同じ文字で、開き以上の長さなら閉じます（CommonMark）。
+    閉じていないブロックは errors に入れます。
+    """
+    prose, blocks, errors = [], [], []
+    lines = body.split("\n")
+    i = 0
+    while i < len(lines):
+        m = FENCE_OPEN_RE.match(lines[i])
+        if not m or (m.group(2)[0] == "`" and "`" in m.group(3)):
+            prose.append(lines[i])
+            i += 1
+            continue
+        indent, fence, info = m.groups()
+        close = re.compile(rf"^[ \t]*{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$")
+        j = i + 1
+        while j < len(lines) and not close.match(lines[j]):
+            j += 1
+        if j >= len(lines):
+            errors.append(f"コード: {i + 1} 行目のコードブロックが閉じていません")
+            break
+        blocks.append((indent, info, "\n".join(lines[i + 1:j])))
+        i = j + 1
+    return "\n".join(prose), blocks, errors
+
+
 def _strip_code(body: str) -> str:
-    return FENCE_RE.sub("", body)
+    return parse_fences(body)[0]
+
+
+def _lang(info: str) -> str:
+    """info 文字列から言語名を取り出し、別名を正規化します（無ければ空文字）。"""
+    info = info.strip()
+    if info.startswith("{"):
+        m = re.search(r"\.([A-Za-z0-9_+-]+)", info)
+        return ALIASES.get(m.group(1).lower(), m.group(1).lower()) if m else ""
+    word = info.split()[0].lower() if info.split() else ""
+    return ALIASES.get(word, word)
+
+
+def _console_commands(code: str) -> str:
+    """console ブロックから、`$ ` で始まる行（と行末 \\ で続く行）だけを取り出します。"""
+    out, cont = [], False
+    for ln in code.split("\n"):
+        if ln.startswith("$ "):
+            out.append(ln[2:])
+            cont = ln.rstrip().endswith("\\")
+        elif cont:
+            out.append(ln)
+            cont = ln.rstrip().endswith("\\")
+    return "\n".join(out)
 
 
 def find_hand_tables(text: str) -> list[str]:
@@ -90,25 +153,42 @@ def check_chapter(path, *, examples_dir, tables_dir, glossary, length_range, pre
 
     # 練習問題
     m = re.search(r"^## 練習問題\s*$(.*?)(?=^## |\Z)", prose, re.M | re.S)
-    count = len(re.findall(r'^\s*\?\?\? note "解答例"', m.group(1), re.M)) if m else 0
+    count = len(re.findall(r'^\s*\?\?\?\+? note "解答例"', m.group(1), re.M)) if m else 0
     if count < MIN_EXERCISES:
         errors.append(f"練習問題: 解答例（??? note \"解答例\"）が {count} 個です（{MIN_EXERCISES} 個以上）")
 
     # コードの一致
     num = re.match(r"(\d+)-", path.name)
+    _, blocks, fence_errors = parse_fences(body)
+    errors += fence_errors
     if num:
+        label = f"examples/{prefix}{num.group(1)}/"
         ex_dir = Path(examples_dir) / f"{prefix}{num.group(1)}"
-        corpus = ""
+        files = []
         if ex_dir.is_dir():
-            corpus = "\n".join(
-                _norm(f.read_text(encoding="utf-8", errors="ignore"))
-                for f in sorted(ex_dir.rglob("*")) if f.is_file())
-        for fm in FENCE_RE.finditer(body):
-            lang = fm.group(3).lower()
-            if lang not in CHECKED_LANGS:
+            files = [_norm(f.read_text(encoding="utf-8", errors="ignore"))
+                     for f in sorted(ex_dir.rglob("*")) if f.is_file()]
+        for indent, info, raw in blocks:
+            lang = _lang(info)
+            if not lang:
+                errors.append("コード: 言語の指定がないコードブロックがあります（出力は text を使います）")
                 continue
-            code = _norm(_dedent(fm.group(4), fm.group(1)))
-            if code and code not in corpus:
-                first = code[:40]
-                errors.append(f"コード: {lang} のブロックが examples/{prefix}{num.group(1)}/ にありません: {first}…")
+            code = _dedent(raw, indent)
+            if lang == "console":
+                lang, code = "bash", _console_commands(code)
+            elif lang in EXEMPT_LANGS:
+                continue
+            elif lang not in CHECKED_LANGS:
+                errors.append(f"コード: 言語「{lang}」は使えません（{', '.join(sorted(CHECKED_LANGS | EXEMPT_LANGS))}, console）")
+                continue
+            code = _norm(code)
+            if code and not any(_contains(f, code) for f in files):
+                errors.append(f"コード: {lang} のブロックが {label} の 1 つのファイルにありません: {code[:40]}…")
     return errors
+
+
+def _contains(file_text: str, code: str) -> bool:
+    """1 つのファイルに code が続けて含まれるか。短い code は語として一致させます。"""
+    if len(code) >= SHORT_BLOCK:
+        return code in file_text
+    return re.search(rf"(?<!\S){re.escape(code)}(?!\S)", file_text) is not None

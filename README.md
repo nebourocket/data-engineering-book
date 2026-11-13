@@ -29,6 +29,8 @@ docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
 docker compose down
 ```
 
+MinIO は公式イメージの配布が止まったため、固定した旧版（`bitnamilegacy/minio`、更新されないイメージ）を使っています。ローカルの学習用に限ります。
+
 `DE_BOOK_REQUIRE_SERVICES=1` を付けると、環境変数が無いとき skip ではなく失敗にします（CI で使います）。章を書くときは [docs/CHAPTER_GUIDE.md](docs/CHAPTER_GUIDE.md) を読みます。
 
 ## 🤖 AI への注意

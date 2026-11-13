@@ -116,6 +116,68 @@ def test_text_and_mermaid_exempt(env):
     assert run(env, make_chapter(extra=extra)) == []
 
 
+@pytest.mark.parametrize("tag", ["py", "sh", "shell", "zsh", "yml", "docker", "Dockerfile", "{.python}",
+                                 "json", "postgresql", "psql", "pgsql", "python title=\"a.py\""])
+def test_alias_and_json_tags_are_checked(env, tag):
+    errors = run(env, make_chapter(extra=f"```{tag}\nsome_unknown_code_here_12345\n```\n\n"))
+    assert any("examples/b01" in e for e in errors), tag
+
+
+def test_alias_matches_examples(env):
+    (env / "examples" / "b01" / "a.sh").write_text("echo hello world\n", encoding="utf-8")
+    assert run(env, make_chapter(extra="```sh\necho hello world\n```\n\n")) == []
+
+
+def test_untagged_block_is_error(env):
+    errors = run(env, make_chapter(extra="```\nls\n```\n\n"))
+    assert any("言語" in e for e in errors)
+
+
+def test_unknown_tag_is_error(env):
+    errors = run(env, make_chapter(extra="```rust\nfn main() {}\n```\n\n"))
+    assert any("rust" in e for e in errors)
+
+
+def test_output_tag_exempt(env):
+    assert run(env, make_chapter(extra="```output\nOK\n```\n\n")) == []
+
+
+def test_console_checks_only_prompt_lines(env):
+    (env / "examples" / "b01" / "a.sh").write_text("ls -la\n", encoding="utf-8")
+    ok = "```console\n$ ls -la\ntotal 0\ndrwx foo\n```\n\n"
+    assert run(env, make_chapter(extra=ok)) == []
+    bad = "```console\n$ rm -rf nothing_here_12345\nignored output\n```\n\n"
+    assert any("examples/b01" in e for e in run(env, make_chapter(extra=bad)))
+
+
+def test_unclosed_fence_is_error(env):
+    errors = run(env, make_chapter(extra="```text\nunclosed\n\n"))
+    assert any("閉じ" in e for e in errors)
+
+
+def test_longer_closing_fence_closes(env):
+    (env / "examples" / "b01" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    assert run(env, make_chapter(extra="```python\nx = 1\n`````\n\n")) == []
+
+
+def test_block_must_be_in_single_file(env):
+    (env / "examples" / "b01" / "a.py").write_text("first_statement_line = 1\n", encoding="utf-8")
+    (env / "examples" / "b01" / "b.py").write_text("second_statement_line = 2\n", encoding="utf-8")
+    block = "```python\nfirst_statement_line = 1\nsecond_statement_line = 2\n```\n\n"
+    assert any("examples/b01" in e for e in run(env, make_chapter(extra=block)))
+
+
+def test_short_block_needs_whole_token_match(env):
+    (env / "examples" / "b01" / "a.sh").write_text("echo false\n", encoding="utf-8")
+    assert any("examples/b01" in e for e in run(env, make_chapter(extra="```bash\nech\n```\n\n")))
+    assert run(env, make_chapter(extra="```bash\nfalse\n```\n\n")) == []
+
+
+def test_open_admonition_solution_counts(env):
+    text = make_chapter().replace('??? note', '???+ note')
+    assert run(env, text) == []
+
+
 def test_glossary_wrong_term_fails(env):
     errors = run(env, make_chapter(extra="これはべき等な処理です。\n\n"))
     assert any("べき等" in e for e in errors)

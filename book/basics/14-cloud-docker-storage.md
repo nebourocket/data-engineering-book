@@ -18,7 +18,7 @@
 
 {{ table("b14-cloud-terms") }}
 
-**リージョン**は、データを置く地域の単位です。東京に置けば、日本の利用者から近く、国内保管の要件にも合います。選んだあとで変えるのは大変で、料金も地域で違います。**アベイラビリティゾーン(AZ)**は、同じリージョンの中の別々の施設で、片方が止まってももう片方が動き続けるようにするための単位です。データの保管は、ストレージの製品が複数の AZ に自動で複製してくれることが多く、利用者が AZ を選ぶ場面は主に計算(サーバー)のほうです。
+**リージョン**は、データを置く地域の単位です。東京に置けば、日本の利用者から近く、国内保管の要件にも合います。選んだあとで変えるのは大変で、料金も地域で違います。**アベイラビリティゾーン(AZ)**は、同じリージョンの中の別々の施設で、片方が止まってももう片方が動き続けるようにするための単位です。
 
 **IAM**(Identity and Access Management)は、誰が何に対して何をしてよいかを決める仕組みです。ここで効く考え方が最小権限で、パイプラインには「そのパイプラインが必要な操作だけ」を渡します。S3 の読み取り専用のポリシーの例です。
 
@@ -47,13 +47,21 @@
 
 処理には、人のユーザーではなく**ロール**を使います。ロールは一時的な認証情報を発行する仕組みなので、コードに長期の鍵を書かずに済みます(第3章)。
 
-**責任共有モデル**は、クラウド事業者が基盤(建物・ハードウェア・仮想化)を守り、利用者がその上の設定とデータを守る、という分担です(AWS の説明は参考文献)。バケットを公開にしてしまう、権限を広く付けすぎる、暗号化を選ばない、バックアップを取らない、は利用者の責任です。クラウドにあるから安全、ではありません。
+実際に AWS を使うときの鍵の置き場所も押さえておきます。`aws configure` を実行すると、アクセスキーとリージョンを聞かれ、手元の `~/.aws/credentials` と `~/.aws/config` に保存されます(このファイルは Git に入れません)。複数の環境がある場合は、`[dev]` のような名前(プロファイル)を付けて保存し、環境変数 `AWS_PROFILE=dev` で切り替えます。boto3 も AWS CLI も、環境変数、このファイル、サーバー上のロールなどから認証情報を自動で探します(順序は AWS の文書で確かめてください)。つながるかは `aws s3 ls`(自分が見えるバケットの一覧)で確かめます。MinIO に向けるときは `aws --endpoint-url http://localhost:9000 s3 ls` と、接続先を指定します。
+
+**責任共有モデル**は、クラウド事業者が基盤(建物・ハードウェア・仮想化)を守り、利用者がその上の設定とデータを守る、という分担です(AWS の説明は参考文献)。バケットの公開、広すぎる権限、暗号化とバックアップの選択は利用者の責任です。
+
+### データエンジニアが触るクラウドのサービス
+
+クラウドには多くのサービスがありますが、データの仕事で出てくるものは限られます。どの事業者にも対応するサービスがあるので、1 社で覚えたことは他社にも使えます(代表例で、2026年11月時点の整理です)。
+
+{{ table("b14-cloud-services") }}
 
 ## コンテナと Docker
 
-アプリを動かすには、プログラム本体のほかに、言語の実行環境と、ライブラリと、設定が要ります。「自分の PC では動くのに、他の環境で動かない」の多くは、この環境の違いが原因です。コンテナは、アプリと必要な環境を 1 つにまとめ、どこでも同じように動かす仕組みです。
+アプリを動かすには、プログラム本体のほかに、言語の実行環境と、ライブラリと、設定が要ります。「自分の PC では動くのに、他の環境で動かない」の多くは、この環境の違いが原因です。コンテナは、アプリと必要な環境を 1 つにまとめて動かす仕組みです。
 
-用語を 3 つ分けます。**イメージ**は、アプリと環境を固めた読み取り専用の雛形です。**コンテナ**は、イメージから起動した実行中の 1 つのプロセスです(同じイメージから何個でも起動できます)。**レイヤ**は、イメージを作る手順の 1 行 1 行が積み重ねた差分で、イメージはこのレイヤの積み重ねです。後で出てくるキャッシュは、このレイヤの単位で効きます。
+用語を 3 つ分けます。**イメージ**は、アプリと環境を固めた読み取り専用の雛形です。**コンテナ**は、イメージから起動した実行中の 1 つのプロセスです(同じイメージから何個でも起動できます)。**レイヤ**は、イメージの中身を作る手順が積み重ねた差分です。ファイルを足したり変えたりする `RUN`・`COPY`・`ADD` が中身の層になり、`ENV`・`CMD`・`USER` などは設定を記録するだけです(Docker の文書)。後で出てくるキャッシュは、この層の単位で効きます。
 
 イメージの作り方を書いたファイルが Dockerfile です。この本の開発用イメージ(リポジトリ直下の `Dockerfile`)も、同じ形です。ここからは、行動ログを日付ごとの Parquet にして S3 互換のストレージへ置く小さな ETL(`examples/b14/etl/`)を例に、Dockerfile の書き方を見ます。
 
@@ -85,7 +93,7 @@ CMD ["python", "etl.py"]
 
 表の 6 つの決まりを、この Dockerfile で確かめます。
 
-**小さいベースイメージを固定したタグで選ぶ。** `python:3.12.8-slim-bookworm` は、Debian 12(bookworm)に Python 3.12.8 を入れた、`slim`(不要なものを省いた)版です。`python` や `python:latest` と書くと、ビルドする日によって中身が変わります。さらに厳密にするなら、イメージの中身を一意に指す「ダイジェスト」(`@sha256:...`)で固定する方法もあります。ビルドの出力にも、解決されたダイジェストが出ます。
+**小さいベースイメージを固定したタグで選ぶ。** `python:3.12.8-slim-bookworm` は、Debian 12(bookworm)に Python 3.12.8 を入れた、`slim`(不要なものを省いた)版です。`python` や `python:latest` と書くと、ビルドする日によって中身が変わります。
 
 **依存のバージョンを固定する。** `requirements.txt` には `boto3==1.44.2` のように `==` で書きます。書いていないと、ビルドし直したら新しい版が入って壊れた、ということが起きます。
 
@@ -117,11 +125,17 @@ uid=10001(etl) gid=10001(etl) groups=10001(etl)
 
 root のままだと、コンテナが攻撃されたときの影響が大きくなります。
 
-**秘密を焼き込まない。** `ENV API_KEY=...` や `COPY .env` でイメージに入れた秘密は、イメージを受け取った人に見えます。あとから消しても、前のレイヤには残ります。秘密は実行時に、環境変数やシークレットの仕組みで渡します(ビルド中に必要な秘密には BuildKit の `--mount=type=secret` があります。参考文献)。`.dockerignore` に `.env` を書き、ビルドに送るファイルから外すのも有効です。
+**秘密を焼き込まない。** `ENV API_KEY=...` や `COPY .env` でイメージに入れた秘密は、イメージを受け取った人に見えます。あとから消しても、前のレイヤには残ります。秘密は実行時に、環境変数やシークレットの仕組みで渡します(ビルド中に必要な秘密には BuildKit の `--mount=type=secret` があります)。
 
 **キャッシュを残さない。** `pip install --no-cache-dir` で、ダウンロードの控えをイメージに残しません。
 
-ビルドして、実行時の設定は環境変数で渡します。
+まず、出力先の MinIO を起動します。リポジトリの直下で、この本の `compose.yaml` を使います。`-d` は裏で動かす、`--wait` は `healthcheck` が通るまで待つ指定です。
+
+```bash
+docker compose up -d --wait
+```
+
+次に、入力を作り、イメージをビルドして、実行時の設定を環境変数で渡して動かします。
 
 ```bash
 python examples/b14/make_input.py examples/b14/data/events.jsonl
@@ -135,9 +149,23 @@ docker run --rm --network host -v "$PWD/examples/b14/data":/data:ro \
 4040 行を 180 ファイルに書きました
 ```
 
-`-v` は、手元のフォルダをコンテナの `/data` に読み取り専用(`:ro`)で見せる設定です。`--network host` は、コンテナを手元のネットワークにそのまま繋ぎ、`localhost:9000` の MinIO に届くようにします(Linux の Docker での書き方で、Docker Desktop では挙動が違うことがあります)。ここで鍵を `-e` で渡しているのはローカルの学習用の値で、本番ではロールやシークレットの仕組みを使います。
+`-v` は、手元のフォルダをコンテナの `/data` に読み取り専用(`:ro`)で見せる設定です。`--network host` は、コンテナを手元のネットワークにそのまま繋ぎ、`localhost:9000` の MinIO に届くようにします(Docker Desktop では挙動が違うことがあります)。終わったら、リポジトリの直下で片付けます。
+
+```bash
+docker compose down
+```
+
+`down` はコンテナとネットワークを消します。名前付きボリュームに入ったデータも消すなら `down -v` です。この本の MinIO は、バケットのデータをコンテナの中に持つので、コンテナを消すとデータも消えます。
 
 Dockerfile の決まりは、レビューで見落としやすいので、読むだけの検査も用意しました(`static_checks.dockerfile_problems`)。上の決まりを機械的に確かめます。本物のビルドは重いので、テストでは回さず、いまの Dockerfile が通ることと、わざと間違えた Dockerfile が引っかかることを確かめています。安全網であって、`docker build` の代わりではありません。
+
+### 毎日使う docker のコマンド
+
+ビルドや起動のあと、状態を見て原因を探すコマンドを使います。
+
+{{ table("b14-docker-commands") }}
+
+データの置き場所には 2 種類あります。`-v "$PWD/examples/b14/data":/data:ro` のように手元のフォルダをそのまま見せる**バインドマウント**は、コンテナを消しても手元のファイルが残ります。一方、**名前付きボリューム**は Docker が管理する保存場所で、`down` では残り、`down -v` で消えます。どちらにも置かないデータは、コンテナを消すと一緒に消えます。「再起動したらデータが無い」は、多くがこれです。
 
 ## docker compose で複数のサービスを動かす
 
@@ -155,7 +183,8 @@ services:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}  # ローカル専用の値。本番の鍵は書かない
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
     ports:
-      - "9000:9000"
+      # 127.0.0.1 だけに公開する。初期パスワードのまま、同じネットワークの他の機器に開かないため
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:9000/minio/health/live"]
       interval: 3s
@@ -176,7 +205,9 @@ services:
       - ./data:/data:ro
 ```
 
-押さえる点は 3 つです。
+押さえる点は 4 つです。
+
+- **公開先**: `ports` は `127.0.0.1:9000:9000` のように、自分の PC だけに公開しています。`9000:9000` と書くと、同じネットワークの他の機器からも届き、初期パスワード(`minioadmin`)のままの MinIO が誰にでも開かれてしまうからです。この本の `compose.yaml` も同じ形にしています。
 
 - **起動順**: `depends_on` だけでは「起動した」までしか待ちません。`condition: service_healthy` を付けると、`healthcheck` が通るまで待ちます。付けないと、MinIO の準備前に ETL が接続して失敗します。
 - **ホスト名**: 同じ compose の中では、サービス名(`minio`)がそのままホスト名になります。コンテナの中の `localhost` は、そのコンテナ自身を指すので、`http://localhost:9000` と書くと ETL からは届きません。
@@ -189,29 +220,11 @@ cd examples/b14
 docker compose -f compose.etl.yaml up --build --abort-on-container-exit
 ```
 
-9000 番を使うので、別の MinIO が動いている間は起動できません。私の確認は `docker compose config` で設定が読めることと、後述の検査までで、起動そのものは実行していません。
+9000 番は 1 つのサービスしか使えないので、この本の `compose.yaml` の MinIO が動いている間は、先に `docker compose down` するか、`MINIO_PORT=9100` のように公開するポートを変えて起動します。ETL がメッセージを出して終わると、`--abort-on-container-exit` によって MinIO も止まります。設定が読める形かどうかは、`docker compose -f compose.etl.yaml config` で確かめられます。
 
-形の検査も同じ考え方です。
+MinIO には、ブラウザで開く管理画面(コンソール)があります。この本の `compose.yaml` は 9001 番で公開しているので、`http://localhost:9001` を開き、ユーザー名とパスワードに `minioadmin` を入れると、バケットとオブジェクトを目で確かめられます。
 
-```python
-def compose_problems(spec):
-    """spec は yaml.safe_load した compose.yaml。"""
-    problems = []
-    services = spec.get("services", {})
-    for name, svc in services.items():
-        image = svc.get("image")
-        if image and (":" not in image or image.endswith(":latest")):
-            problems.append(f"{name}: image {image} のタグが固定されていない")
-        for dep, cond in (svc.get("depends_on") or {}).items():
-            if not isinstance(cond, dict) or cond.get("condition") != "service_healthy":
-                problems.append(f"{name}: {dep} の起動完了を待っていない (service_healthy が無い)")
-            elif "healthcheck" not in services.get(dep, {}):
-                problems.append(f"{name}: {dep} に healthcheck が無い")
-        for key, value in (svc.get("environment") or {}).items():
-            if SECRET_NAME.search(key) and not str(value).startswith("${"):
-                problems.append(f"{name}: {key} の値が compose に直書きされている")
-    return problems
-```
+`static_checks.compose_problems` は、タグの固定、`depends_on` の `service_healthy`、待たれる側の `healthcheck`、鍵の直書きがないことを読んで確かめます。
 
 この本の `compose.yaml` は、パスワード(`POSTGRES_PASSWORD`)を学習用に直書きしているので、この検査の「直書き」には引っかかります。テストは、それ以外の問題(タグの固定、`healthcheck`)が無いことだけを確かめています。ローカルの学習用の値は直書きでよく、本番では別の仕組みに変える、という線引きです。
 
@@ -233,6 +246,8 @@ def make_client(env=None):
         kwargs["endpoint_url"] = env["S3_ENDPOINT"]
         kwargs["config"] = Config(s3={"addressing_style": "path"})  # MinIO はパス形式
     if env.get("S3_ACCESS_KEY"):  # 無ければ boto3 の標準の探し方 (環境変数・ロール) に任せる
+        if not env.get("S3_SECRET_KEY"):
+            raise ValueError("S3_ACCESS_KEY を渡したなら S3_SECRET_KEY も必要です")
         kwargs["aws_access_key_id"] = env["S3_ACCESS_KEY"]
         kwargs["aws_secret_access_key"] = env["S3_SECRET_KEY"]
     return boto3.client("s3", **kwargs)
@@ -282,7 +297,7 @@ S3_ENDPOINT=http://localhost:9000 S3_ACCESS_KEY=minioadmin S3_SECRET_KEY=minioad
 まとめた後: ['events/dt=2026-01-02/compacted.parquet'] = events/dt=2026-01-02/compacted.parquet
 ```
 
-4 行目に注目してください。同じ 7 件を、1 回の上限を 2 件に下げて一覧すると 4 回のリクエストが要ります。本番の上限は 1000 件なので、10 万件のキーを全部一覧するには、単純計算で 100 回の LIST です。LIST は、料金表では PUT・COPY・POST と同じ区分で、GET とは別に課金されます。一覧は「安い読み取り」ではなく、回数を意識する操作です。
+4 行目に注目してください。同じ 7 件を、1 回の上限を 2 件に下げて一覧すると 4 回のリクエストが要ります。本番の上限は 1000 件なので、10 万件のキーを全部一覧するには、単純計算で 100 回の LIST です。LIST は、料金表では PUT・COPY・POST と同じ区分で、GET とは別に課金されます。
 
 ### プレフィックスは文字の前方一致
 
@@ -307,7 +322,7 @@ def upload_large(client, bucket, key, path, threshold=5 * MIB):
     return client.head_object(Bucket=bucket, Key=key)["ETag"].strip('"')
 ```
 
-テストでは 11 MiB のファイルを 5 MiB ずつ 3 パートで上げ、ETag の末尾が `-3` になることを確かめています。分割して上げたオブジェクトの ETag は中身のハッシュそのものではないので、中身の比較には使えません。
+分割して上げたオブジェクトの ETag は中身のハッシュそのものではないので、中身の比較には使えません。
 
 認証情報を渡さずに、1 つのオブジェクトだけを期限付きで読ませたいときは、**署名付き URL**を作ります。
 
@@ -318,30 +333,38 @@ def presigned_get(client, bucket, key, seconds=60):
         "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=seconds)
 ```
 
-テストでは、その URL で本文が読めること、別のキーに書き換えると 403 になること、期限が切れると 403 になることを確かめています。URL を知っている人は誰でも読めるので、有効期限は短くします。
+テストでは、本文が読めること、キーを書き換えると 403 になること、期限が切れると 403 になることを確かめています。URL を知っている人は誰でも読めるので、期限は短くします。
 
 ### ライフサイクルと暗号化
 
-一時ファイルが溜まり続けると、保存の費用が増えます。**ライフサイクル規則**で、プレフィックスごとに自動で消す(または安いクラスへ移す)ことができます。
+一時ファイルが溜まり続けると、保存の費用が増えます。**ライフサイクル規則**で、プレフィックスごとに自動で消す(または安いクラスへ移す)ことができます。注意点は、書き込みの API が規則の「全体」を置き換えることです。読まずに書くと、既にある他の規則が消えます。そこで下のコードは、今の規則を読んで、同じ ID の規則だけ差し替えます。Terraform で管理しているバケットでは、ここから規則を書き換えると Terraform の記述とずれるので、Terraform 側だけで書きます。
 
 ```python
 def expire_prefix_after(client, bucket, prefix, days):
-    """prefix 配下のオブジェクトを days 日後に自動で消すライフサイクル規則を設定します。"""
-    client.put_bucket_lifecycle_configuration(
-        Bucket=bucket,
-        LifecycleConfiguration={"Rules": [{
-            "ID": f"expire-{prefix.strip('/').replace('/', '-')}",
-            "Filter": {"Prefix": prefix},
-            "Status": "Enabled",
-            "Expiration": {"Days": days},
-        }]})
+    """prefix 配下のオブジェクトを days 日後に自動で消す規則を足します。
+
+    put_bucket_lifecycle_configuration は規則の「全体」を置き換えるので、先に今の規則を読み、
+    同じ ID の規則だけ差し替えます (読まずに書くと、既にある他の規則が消えます)。
+    Terraform で管理しているバケットでは、ここからは触らず Terraform 側だけで書き換えます。
+    """
+    rule_id = f"expire-{prefix.strip('/').replace('/', '-')}"
+    try:
+        rules = client.get_bucket_lifecycle_configuration(Bucket=bucket)["Rules"]
+    except client.exceptions.ClientError as e:
+        if e.response["Error"]["Code"] != "NoSuchLifecycleConfiguration":
+            raise
+        rules = []
+    rules = [r for r in rules if r["ID"] != rule_id]
+    rules.append({"ID": rule_id, "Filter": {"Prefix": prefix}, "Status": "Enabled",
+                  "Expiration": {"Days": days}})
+    client.put_bucket_lifecycle_configuration(Bucket=bucket, LifecycleConfiguration={"Rules": rules})
 ```
 
-**暗号化**には 2 つあります。通信の暗号化(https)と、保存時の暗号化(サーバー側暗号化)です。AWS の S3 は、保存時の暗号化が既定で有効です(文書の説明)。鍵の管理を自分で行いたいときは KMS(鍵管理サービス)を選びます。この本の旧版の MinIO は、鍵の管理サービスを設定していないため、暗号化の指定は試していません。次の IaC の例では、保存時の暗号化を設定として書きます。
+**暗号化**には 2 つあります。通信の暗号化(https)と、保存時の暗号化(サーバー側暗号化)です。AWS の S3 は、保存時の暗号化が既定で有効です(文書の説明)。鍵の管理を自分で行いたいときは KMS(鍵管理サービス)を選びます。この本の MinIO では暗号化の指定を試していません。次の IaC の例で、設定として書きます。
 
 ### ローカルの MinIO にしかない癖
 
-この本の MinIO(旧版・1 ドライブ)は、ファイルシステムの上にオブジェクトを置くと考えられます。実際に、`events` というキーと `events/dt=1/p` というキーを同じバケットに置くと、片方しか一覧に出ませんでした(`test_local_minio_hides_a_key_that_is_also_a_folder` で確かめています。原因は上のファイルシステムの性質と推測しています)。S3 では両方を別のキーとして置けます。ローカルと本番の差の実例なので、後の節で扱います。
+MinIO の文書には、アプリは親や兄弟と名前が衝突しないキーを付ける必要がある、と書かれています(「Conflicting objects」。参考文献)。この本の MinIO で `events` というキーと `events/dt=1/p` というキーを同じバケットに置くと、実際に片方しか一覧に出ませんでした(`test_local_minio_hides_a_key_that_is_also_a_folder` で確かめています)。S3 では両方を別のキーとして共存させられます。ローカルと本番の差の実例なので、後の節で扱います。
 
 ## ファイルの置き方
 
@@ -386,12 +409,18 @@ one {'files': 1, 'bytes': 108832, 'rows': 4040}
 small {'files': 41, 'bytes': 197737, 'rows': 4040}
 ```
 
-行数は同じなのに、合計サイズは約 1.8 倍です。ストリーミングの取り込みのように、短い間隔で少しずつ書く処理は、この形になりがちです。対策は、あとでまとめ直す**コンパクション**です。
+行数は同じなのに、合計サイズは約 1.8 倍です。対策は、あとでまとめ直す**コンパクション**です。
 
 ```python
 def compact(client, bucket, partition_prefix):
-    """prefix 配下の小さな Parquet を 1 つにまとめます。先に書いてから古いものを消します。"""
+    """prefix 配下の小さな Parquet を 1 つにまとめます。先に書いてから古いものを消します。
+
+    パーティション 1 つ分をメモリに全部読むので、大きなパーティションには向きません。
+    まとめるものが無ければ何もせず None を返します。
+    """
     keys, _ = list_keys(client, bucket, partition_prefix)
+    if not keys:
+        return None
     tables = [pq.read_table(io.BytesIO(client.get_object(Bucket=bucket, Key=k)["Body"].read()))
               for k in keys]
     merged = pa.concat_tables(tables)
@@ -401,11 +430,13 @@ def compact(client, bucket, partition_prefix):
     client.put_object(Bucket=bucket, Key=new_key, Body=buf.getvalue())
     old = [{"Key": k} for k in keys if k != new_key]
     for i in range(0, len(old), 1000):  # delete_objects は 1 回 1000 件まで
-        client.delete_objects(Bucket=bucket, Delete={"Objects": old[i:i + 1000]})
+        response = client.delete_objects(Bucket=bucket, Delete={"Objects": old[i:i + 1000]})
+        if response.get("Errors"):  # 一部だけ消せなかった場合も例外にする
+            raise RuntimeError(f"削除に失敗したキーがあります: {response['Errors'][0]}")
     return new_key
 ```
 
-「先に書いてから消す」順にしているのは、途中で失敗しても元のデータが残るからです。ただし、新旧が一瞬同時に見えるので、その間に読む人は重複を読みます。読み手が影響を受けない運用(コンパクションの時間帯を決める、完了のマーカーを使う)や、テーブルフォーマットでの扱いは、応用編で見ます。最適なファイルの大きさは、読む道具とデータの量で変わるので、実測で決めます。
+このコードは、パーティション 1 つ分を全部メモリに読むので、大きなパーティションには向きません。まとめるものが無ければ何もしません。「先に書いてから消す」順にしているのは、途中で失敗しても元のデータが残るからです。消す操作が一部失敗したときは、見逃さず例外にします。ただし、新旧が一瞬同時に見えるので、その間に読む人は重複を読みます。最適なファイルの大きさは、読む道具とデータの量で変わるので、実測で決めます。
 
 ## IaC の考え方
 
@@ -413,7 +444,7 @@ def compact(client, bucket, partition_prefix):
 
 Terraform は、その代表的な道具の 1 つです。書くのは「どうなっていてほしいか」(宣言)で、`terraform plan` が現状との差分を示し、`terraform apply` が差分を反映します。実際の状態は「state」というファイルに記録されます。S3 のバケットを作る例です(`examples/b14/infra/main.tf`。この言語は HCL という書式です)。
 
-```ini title="main.tf"
+```text title="main.tf"
 terraform {
   required_version = ">= 1.6"
   required_providers {
@@ -465,38 +496,20 @@ resource "aws_s3_bucket_lifecycle_configuration" "lake" {
     expiration {
       days = 7
     }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
   }
 }
 ```
 
-(本書の検査が扱える言語の都合で、ブロックの言語名は `ini` にしていますが、中身は Terraform の設定ファイルです。)読み方は、`resource "種類" "名前" { ... }` が 1 つのインフラの部品です。バケット本体、公開のブロック、保存時の暗号化、`tmp/` を 7 日で消すライフサイクル規則、の 4 つを書きました。バケット名は `var.bucket_name` として外から渡し、リージョンは `provider` に書きます。アクセスキーは書いていません。認証は、実行する人やロールの側に持たせます。
+ライフサイクル規則には、途中で終わった分割アップロードの残骸を 7 日で消す指定(`abort_incomplete_multipart_upload`)も足しました。失敗した分割アップロードの部品は、完了か中止をするまで保存の費用がかかり続けるためです。バージョニング(上書きや削除の前の版を残す機能)は、有効にすると古い版も費用になるので、この例では入れていません。読み方は、`resource "種類" "名前" { ... }` が 1 つのインフラの部品です。バケット本体、公開のブロック、保存時の暗号化、`tmp/` を 7 日で消すライフサイクル規則、の 4 つを書きました。バケット名は `var.bucket_name` として外から渡し、リージョンは `provider` に書きます。アクセスキーは書いていません。認証は、実行する人やロールの側に持たせます。
 
-この環境には Terraform を入れていないので、`apply` も `validate` も実行していません。かわりに、読むだけの形の検査を書きました。
+Terraform を使う手順は、`terraform fmt`(書式をそろえる)・`terraform init`(プロバイダを取得する)・`terraform validate`(文法を確かめる)・`terraform plan`(現状との差分を表示する)・`terraform apply`(反映する)の順です。実際の状態を記録した state ファイルには機密が混ざることがあるので Git に入れず、チームで使うときは共有の場所に置きます。本書の環境には Terraform を入れていないので、ここでは読むだけの形の検査を書きました。
 
-```python
-def terraform_problems(text):
-    problems = []
-    # 文字列とコメントを消してから、括弧の釣り合いと resource の種類を見る
-    bare = re.sub(r'"[^"\n]*"', '""', re.sub(r"(?m)^\s*(#|//).*$", "", text))
-    if bare.count("{") != bare.count("}"):
-        problems.append("波括弧 { } の数が合わない")
-    kinds = set(re.findall(r'resource\s+"(\w+)"', text))
-    for need in ("aws_s3_bucket", "aws_s3_bucket_public_access_block",
-                 "aws_s3_bucket_server_side_encryption_configuration"):
-        if need not in kinds:
-            problems.append(f"{need} が無い")
-    if re.search(r"AKIA[0-9A-Z]{16}|secret_key|access_key", text):
-        problems.append("アクセスキーらしい文字列がある")
-    if not re.search(r"bucket\s*=\s*var\.bucket_name", text):
-        problems.append("バケット名が変数になっていない")
-    for flag in ("block_public_acls", "block_public_policy",
-                 "ignore_public_acls", "restrict_public_buckets"):
-        if not re.search(rf"{flag}\s*=\s*true", text):
-            problems.append(f"{flag} が true でない")
-    return problems
-```
+`static_checks.terraform_problems` は、括弧の釣り合い、必須の部品、公開のブロック、鍵が書かれていないこと、バケット名が変数であることを読んで確かめます。
 
-括弧の釣り合い、必須の部品、公開のブロック、鍵の有無を見ます。文法を理解した検査ではなく、手が滑ったときの安全網です。本物は、`terraform fmt -check`・`terraform validate`・`terraform plan` で、CI で毎回流します。また、`~> 6.0` のバージョン指定は 2026年11月時点で私が選んだ値なので、使うときは AWS プロバイダの最新の文書で確かめてください。
+括弧の釣り合い、必須の部品、公開のブロック、鍵の有無を見ます。文法を理解した検査ではなく、手が滑ったときの安全網です。本物は、`terraform fmt -check`・`terraform validate`・`terraform plan` で、CI で毎回流します。`~> 6.0` というバージョン指定(6.x の最新を許す)は2026年11月時点の例なので、使うときは AWS プロバイダの文書で現在の版を確かめてください。
 
 ## 費用の入口
 
@@ -504,7 +517,7 @@ def terraform_problems(text):
 
 {{ table("b14-cost") }}
 
-データエンジニアが事故を起こしやすいのは、**リクエスト**と**データ転送**です。保存の費用は容量から見積もれますが、リクエストはファイルの数と読み方で決まります。小さいファイルを 100 万個置くと、読むたびに 100 万回の GET が走ります。データ転送は、リージョンの外やインターネットへ出る方向に課金されます(料金表で確かめてください)。別リージョンの計算から大きなデータを毎日読むような構成は、気づかないうちに費用が膨らみます。処理は、データのあるリージョンで動かします。
+事故を起こしやすいのは**リクエスト**と**データ転送**です。小さいファイルを 100 万個置くと、全部を読むたびに 100 万回の GET が走ります。データ転送は、リージョンの外やインターネットへ出る方向に課金されます(料金表で確かめてください)。処理は、データのあるリージョンで動かします。
 
 料金の数字は事業者・リージョン・時期で変わるので、この本には書きません。各社の料金表(参考文献)を見て、予算のアラートを最初に設定しておくと、想定外の請求に早く気づけます。
 
@@ -514,19 +527,16 @@ def terraform_problems(text):
 
 {{ table("b14-local-prod") }}
 
-方針は 3 つです。(1) **差は設定に閉じ込める**。接続先・認証・リージョンは環境変数にして、コードは 1 つにします(`make_client` はその形です。テストでは、環境変数の違いで接続先が切り替わることを確かめています)。(2) **コードで認証を持たない**。ローカルは固定の値、本番はロール、という違いを、boto3 の標準の探し方に任せます。(3) **差が残る部分を知っておく**。暗号化・アクセス権・キーの衝突・性能は、ローカルでは試せない、あるいは違う動きをします。テストが通ったことを、本番でも動く証拠とは見なさず、本番に近い環境(本物の S3 の小さなバケット)での確認を、デプロイの前に 1 回入れます。
+方針は 3 つです。(1) **差は設定に閉じ込める**。接続先・認証・リージョンは環境変数にして、コードは 1 つにします(`make_client` はその形です。テストでは、環境変数の違いで接続先が切り替わることを確かめています)。(2) **コードで認証を持たない**。違いは boto3 の標準の探し方に任せます。(3) **差が残る部分を知っておく**。暗号化・アクセス権・キーの衝突・性能は、ローカルでは試せない、あるいは違う動きをします。テストが通ったことを、本番でも動く証拠とは見なさず、本番に近い環境(本物の S3 の小さなバケット)での確認を、デプロイの前に 1 回入れます。
 
 ## よくある失敗
 
 - **`latest` のイメージを使う**: ある日ビルドし直したら動かなくなります。タグと依存を固定します。
 - **`COPY . .` を最初に書く**: コードを直すたびに依存が全部入れ直しになります。
 - **root のまま動かす・秘密を `ENV` に書く**: どちらも、事故の被害を広げます。
-- **コンテナの中で `localhost` に繋ぐ**: 自分自身を指します。compose ではサービス名を使います。
-- **`depends_on` だけで待つ**: 起動しただけで準備前のサービスに繋ぎ、失敗します。`healthcheck` と `service_healthy` を使います。
 - **ポリシーの `Resource` を取り違える**: ListBucket はバケット、GetObject はオブジェクトです。
 - **プレフィックスをフォルダだと思う**: 文字の前方一致です。`events` は `events_old` にも一致します。
 - **小さいファイルを大量に作る**: 費用も、読む時間も、ファイルのサイズも増えます。
-- **一覧を何度も回す**: LIST は課金される操作です。必要な接頭辞に絞り、結果を使い回します。
 
 ## まとめ
 
@@ -540,10 +550,10 @@ def terraform_problems(text):
 
 ## 練習問題
 
-**問1.** 行動ログを 100 行ずつ 41 ファイルで書いた場合は、1 ファイルで書いた場合より、合計サイズが何倍になりますか。また、なぜ増えるのですか。
+**問1.** `small_files.py` の `compare` で 100 行ずつにしている `rows_per_file` を 400 や 1000 に変えて流し、ファイル数と合計バイト数がどう変わるかを調べてください。100 行のとき(41 ファイルで 197,737 バイト)は、1 ファイルのとき(108,832 バイト)の何倍ですか。
 
 ??? note "解答例"
-    197,737 / 108,832 で、約 1.8 倍です(`small_files.compare` の実測)。Parquet はファイルごとにメタデータ(列の情報や統計)を持つので、同じ行数でも、ファイルが多いほど合計が大きくなります。読む側もファイルごとにリクエストが要るので、時間と費用も増えます。
+    100 行のときは 197,737 / 108,832 で約 1.8 倍です。`rows_per_file` を大きくするほどファイルは減り、合計バイトは 1 ファイルの値に近づきます(あなたの手元の数字を `python examples/b14/small_files.py` で確かめてください)。Parquet はファイルごとにメタデータ(列の情報や統計)を持つので、同じ行数でも、ファイルが多いほど合計が大きくなります。読む側もファイルごとにリクエストが要るので、時間と費用も増えます。
 
 **問2.** 次の Dockerfile の問題点を、できるだけ挙げてください。`requirements.txt` には `boto3` とだけ書かれているものとします。
 
@@ -563,10 +573,10 @@ CMD python etl.py
 ??? note "解答例"
     `GetObject` の対象はバケットではなく、中のオブジェクトだからです。`arn:aws:s3:::deb-lake/events/*` のように、オブジェクトを指す形に直します。`policy_problems` は、この取り違えを検出します(`test_policy_checker_flags_getobject_on_bucket_only`)。逆に `s3:ListBucket` の対象は、バケットの ARN です。
 
-**問4.** キーが `events/dt=2026-01-01/p`、`events/dt=2026-01-02/p`、`events/dt=2026-01-10/p` の 3 つのとき、`Prefix="events/dt=2026-01-0"` で一覧すると何が返りますか。また、10 万個のキーを 1 回 1000 件で全部一覧すると、LIST は最低何回ですか。
+**問4.** 「バケット `deb-lake` の `reports/` 以下だけを読める」ポリシーを書いてください。一覧もできるようにします。書けたら `static_checks.policy_problems` に渡して、問題が出ないことを確かめてください。
 
 ??? note "解答例"
-    前の 2 つ(`dt=2026-01-01` と `dt=2026-01-02`)が返ります。プレフィックスは前から文字で比べるだけなので、`dt=2026-01-1` で始まる 10 日は一致しません(`test_prefix_match_is_character_by_character` で確かめています)。LIST の回数は 100000 ÷ 1000 で、最低 100 回です。
+    本文のポリシーの `events` を `reports` に置き換えた形です。`s3:ListBucket` は `arn:aws:s3:::deb-lake` に `Condition` で `s3:prefix` を `reports/*` に絞り、`s3:GetObject` は `arn:aws:s3:::deb-lake/reports/*` に付けます。`Action` や `Resource` に `*` だけを書かないこと、ListBucket はバケット、GetObject はオブジェクトを指すことが要点です。
 
 ## 参考文献
 
@@ -582,6 +592,8 @@ CMD python etl.py
 - AWS, “What is Amazon S3?”(データ整合性モデル), <https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html>
 - AWS, “Organizing objects in the Amazon S3 console by using folders”, <https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-folders.html>
 - AWS, “ListObjectsV2”, <https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html>
+- AWS, “Amazon S3 multipart upload limits”(パートの大きさ 5 MiB〜5 GiB), <https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html>
+- MinIO Documentation, “Thresholds and Limits”(Conflicting objects), <https://docs.min.io/aistor/reference/aistor-server/thresholds/>
 - AWS, “Uploading and copying objects using multipart upload”, <https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html>
 - AWS, “Sharing objects with presigned URLs”, <https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html>
 - AWS, “Managing the lifecycle of objects”, <https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html>
@@ -590,7 +602,7 @@ CMD python etl.py
 - boto3 Documentation, “Paginators”, <https://boto3.amazonaws.com/v1/documentation/api/latest/guide/paginators.html>
 - HashiCorp, “What is Terraform?”, <https://developer.hashicorp.com/terraform/intro>
 - Terraform Registry, “aws_s3_bucket”, <https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket>
-- DuckDB Documentation, “Hive Partitioning”, <https://duckdb.org/docs/current/data/partitioning/hive_partitioning.html>
+- DuckDB Documentation, “Hive Partitioning”, <https://duckdb.org/docs/current/data/partitioning/hive_partitioning>
 
 !!! tip "さらに深く"
-    ストレージ・リクエスト・転送の費用を設計で下げる方法は、応用編 第10章「コスト最適化」で、小さいファイルのまとめ直しをテーブルフォーマットで安全に行う方法は、応用編 第3章「レイクハウスとテーブルフォーマット」で扱います。
+    ストレージ・リクエスト・転送の費用を設計で下げる方法は、応用編 第9章「ガバナンス・セキュリティ・個人情報」で権限と暗号化の設計を、応用編 第10章「コスト最適化」で、小さいファイルのまとめ直しをテーブルフォーマットで安全に行う方法は、応用編 第3章「レイクハウスとテーブルフォーマット」で扱います。

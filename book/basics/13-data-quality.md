@@ -16,7 +16,7 @@
 
 データ品質は、「そのデータは、使う目的に対して足りているか」で決まります。同じ表でも、用途によって合否が変わります。ねぼすけ商店の行動ログには、発生から 1 日以上遅れて届く行があります。月次の売上報告なら誤差の範囲ですが、「今この瞬間のカート放棄」を見る画面では致命的です。品質に絶対の基準はなく、「誰が、何のために使うか」を先に決めてから、観点を選びます。
 
-観点は、次の 8 つに分けると整理しやすくなります(分け方は文献によって少しずつ違います。ここでは、現場で確認を書くときに使いやすい形にしました)。
+観点は、次の 8 つに分けると整理しやすくなります。この 8 つは本書のまとめ方で、決まった標準ではありません。有名な整理に DAMA(データ管理の国際団体)が挙げる 6 つの観点(完全性・一意性・適時性・妥当性・正確性・一貫性)があり、それを現場で確認を書くときの単位に合わせて分け直したものです。
 
 {{ table("b13-dimensions") }}
 
@@ -36,7 +36,7 @@
 
 **分布**は、値の偏りが普段と同じかです。件数・平均・割合を、過去と比べます。
 
-**参照整合性**は、参照先が存在するかです。注文の `customer_id` が顧客表にあるか、を見ます。PostgreSQL のような DBMS(データベース管理システム)では、外部キー制約を宣言すればデータベースが守ってくれます(第7章)。一方、クラウドのデータウェアハウス(分析用の大きな DB)では事情が違います。たとえば BigQuery は主キーや外部キーを宣言できますが `NOT ENFORCED`(強制しない)で、Snowflake も標準のテーブルでは NOT NULL 以外の制約を強制しません(参考文献)。宣言があっても守られていると思い込まず、自分で確認を書きます。
+**参照整合性**は、参照先が存在するかです。注文の `customer_id` が顧客表にあるか、を見ます。PostgreSQL のような DBMS(データベース管理システム)では、外部キー制約を宣言すればデータベースが守ってくれます(第7章)。一方、クラウドのデータウェアハウス(分析用の大きな DB)では事情が違います。たとえば BigQuery は主キーや外部キーを宣言できますが `NOT ENFORCED`(強制しない)で、Snowflake も標準のテーブルでは NOT NULL と CHECK 以外(主キー・UNIQUE・外部キー)を強制しません(参考文献)。宣言があっても守られていると思い込まず、自分で確認を書きます。
 
 ## どこで確かめるか
 
@@ -192,27 +192,30 @@ FROM events;
 
 ## 確認を実行器にする
 
+この節から、Python のコードを動かします。リポジトリの直下で、第4章までに使った開発用イメージの中(または Python と `requirements.txt` の道具が入った環境)に入って流します。`shop.duckdb` は、ねぼすけ商店のデータを入れた DuckDB のファイルで、無ければ自動で作られます。コードの中身が全部分からなくても、「何を渡すと何が返るか」を追えれば先へ進めます。
+
 SQL を手で流すだけでは、毎日は続きません。確認を「流して、結果を残して、必要なら止める」仕組みにします。実行器は `examples/b13/quality.py` で、DuckDB で動かします。設計は 1 つの約束に絞りました。
 
 > 確認は、「悪い行の数 bad」と「見た行の数 total」を返す SQL 1 本で表す。bad / total が上限以下なら合格。
 
-件数を返すだけにすると、割合の閾値も、ゼロ許容も、同じ形で書けます。確認の定義は次のとおりです。
+件数を返すだけにすると、割合の閾値も、ゼロ許容も、同じ形で書けます。たとえば「メールの欠けが 20 件、見た行が 505 行」なら bad = 20、total = 505 で、比率は約 3.96% です。上限が 2% なら不合格、5% なら合格です。確認の定義は次のとおりです。
 
 ```python
 @dataclass(frozen=True)
 class Check:
     name: str
     dimension: str  # 完全性・一意性・鮮度など
-    severity: str  # "error" か "warn"
+    severity: str  # "error" か "warn" か "info"
     sql: str  # 1 行 2 列 (bad, total) を返す SELECT
     max_ratio: float = 0.0
+    owner: str = ""  # 通知に添える持ち主 (チーム名など)
 
 
 class QualityError(Exception):
     """severity が error の確認が不合格だったときに投げます。"""
 ```
 
-`@dataclass` は、フィールド名を並べるだけで `__init__` などを自動で作る印です。`frozen=True` は、作ったあとに値を書き換えられなくします。確認の定義が実行中に変わらないようにするためです。
+`severity` には `"error"`・`"warn"` のほかに、結果を表に残すだけで通知もしない `"info"` も使えます。`owner` は、通知に添える持ち主(チーム名)です。`@dataclass` は、フィールド名を並べるだけで `__init__` などを自動で作る印です。`frozen=True` は、作ったあとに値を書き換えられなくします。確認の定義が実行中に変わらないようにするためです。
 
 よく使う確認は、作り方を関数にしておきます。dbt の `not_null` や `unique` と同じ名前にしました。
 
@@ -231,7 +234,7 @@ def unique(table, column, severity="error", max_ratio=0.0):
 
 表名と列名を f 文字列で SQL に埋めています。これは、利用者の入力を受けるコードでは SQL インジェクション(悪意のある文字列で SQL を書き換えられる攻撃)の原因になります。このファイルでは、コードに直接書いた信頼できる名前だけを渡す前提です。
 
-ほかにも、`accepted_values`(許す値の一覧)・`relationships`(参照整合性)・`freshness`(鮮度)・`row_count_between`(量)・`late_arrival`(遅延の割合)・`schema_matches`(スキーマ)・`volume_zscore`(分布)を同じ形で用意しました。`freshness` は「今」を引数 `as_of` で受け取ります。現在時刻を中で読むと、テストの結果が実行する日によって変わってしまうからです。実行は次の 2 つの関数です。
+ほかにも、`accepted_values`(許す値の一覧)・`relationships`(参照整合性)・`freshness`(鮮度)・`row_count_between`(量)・`late_arrival`(遅延の割合)・`schema_matches`(スキーマ)・`volume_zscore`(分布)・`quarantine_ratio`(隔離した行の割合)を同じ形で用意しました。`freshness` は「今」を引数 `as_of` で受け取ります。現在時刻を中で読むと、テストの結果が実行する日によって変わってしまうからです。同じ理由で、`shop_checks` の日付や行数の範囲も、サンプルデータに合わせた値を引数で差し替えられる形にしてあります。実行は次の 2 つの関数です。
 
 ```python
 @dataclass(frozen=True)
@@ -242,14 +245,17 @@ class Result:
     passed: bool
     detail: str = ""
 
+    @property
+    def ratio(self):
+        return self.bad / self.total if self.total else 0.0
+
 
 def _evaluate(con, check):
     try:
         bad, total = con.execute(check.sql).fetchone()
     except duckdb.Error as e:  # 測れなかった確認は不合格にする
         return Result(check, 0, 0, False, f"{type(e).__name__}: {str(e).splitlines()[0]}")
-    ratio = bad / total if total else 0.0
-    return Result(check, bad, total, ratio <= check.max_ratio)
+    return Result(check, bad, total, (bad / total if total else 0.0) <= check.max_ratio)
 ```
 
 SQL が失敗したとき(表が無い、列名の打ち間違い)は、例外で全体を落とすのではなく、その確認だけを「不合格」にして理由を `detail` に残します。確認の書き間違いで他の確認まで止まる、という事態を避けつつ、測れていないことは必ず表に出ます。
@@ -261,14 +267,13 @@ def run_checks(con, checks, run_id, now=None):
     con.execute("""
         CREATE TABLE IF NOT EXISTS dq_results (
             run_id VARCHAR, run_at TIMESTAMPTZ, check_name VARCHAR, dimension VARCHAR,
-            severity VARCHAR, bad BIGINT, total BIGINT, ratio DOUBLE, max_ratio DOUBLE,
+            severity VARCHAR, owner VARCHAR, bad BIGINT, total BIGINT, ratio DOUBLE, max_ratio DOUBLE,
             passed BOOLEAN, detail VARCHAR)""")
     results = [_evaluate(con, c) for c in checks]
     for r in results:
-        ratio = r.bad / r.total if r.total else 0.0
-        con.execute("INSERT INTO dq_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        con.execute("INSERT INTO dq_results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [run_id, now, r.check.name, r.check.dimension, r.check.severity,
-                     r.bad, r.total, ratio, r.check.max_ratio, r.passed, r.detail])
+                     r.check.owner, r.bad, r.total, r.ratio, r.check.max_ratio, r.passed, r.detail])
     return results
 
 
@@ -278,7 +283,8 @@ def gate(con, checks, run_id, notify=print, now=None):
     failed = [r for r in results if not r.passed]
     for r in failed:
         if r.check.severity == "warn":
-            notify(f"[WARN] {r.check.name}: {r.bad}/{r.total} {r.detail}".rstrip())
+            owner = f" (持ち主: {r.check.owner})" if r.check.owner else ""
+            notify(f"[WARN] {r.check.name}: {r.bad}/{r.total} {r.detail}{owner}".rstrip())
     errors = [r for r in failed if r.check.severity == "error"]
     if errors:
         names = ", ".join(r.check.name for r in errors)
@@ -286,7 +292,7 @@ def gate(con, checks, run_id, notify=print, now=None):
     return results
 ```
 
-ここに、これまで教えた決まりが入っています。`run_at` は `TIMESTAMPTZ`(タイムゾーン付きの時刻)の列に、UTC の現在時刻を入れます(第2章)。止める前に結果を表へ書き込むので、止まった回の記録も残ります。記録が無いと、あとで「いつから落ちていたか」が分からなくなるからです。`notify` は関数を引数で渡す形にしてあり、既定は `print` ですが、本番では Slack などへ送る関数に差し替えられます。テストでは、通知を溜めるリストの `append` を渡して中身を確かめています。
+ここに、これまで教えた決まりが入っています。`run_at` は `TIMESTAMPTZ`(タイムゾーン付きの時刻)の列に、UTC の現在時刻を入れます(第2章)。止める前に結果を表へ書き込むので、止まった回の記録も残ります。記録が無いと、あとで「いつから落ちていたか」が分からなくなるからです。`notify` は関数を引数で渡す形にしてあり(「関数に関数を渡す」書き方で、渡す関数を変えれば送り先が変わります)、既定は `print` ですが、本番では Slack などへ送る関数に差し替えられます。テストでは、通知を溜めるリストの `append` を渡して中身を確かめています。
 
 ねぼすけ商店の確認一覧は `shop_checks()` にあり、`main()` が流します。
 
@@ -312,8 +318,7 @@ def main(db="shop.duckdb", run_id=None):
 終了コードで合否を返す形は、第3章で見た約束です。cron でもシェルスクリプトでも、第12章の Airflow のタスクでも、終了コード 1 を見て後続を止められます。流してみます。
 
 ```bash
-python examples/b13/quality.py
-echo "exit=$?"
+python examples/b13/quality.py; echo "exit=$?"
 ```
 
 ```text
@@ -324,7 +329,7 @@ echo "exit=$?"
 exit=1
 ```
 
-3 つの warn が通知され、行動ログの重複(error)で止まりました。この挙動はテスト(`test_b13_quality.py`)でも確かめています。5 つの欠陥のうち、遅れて届く行(3.0%)は閾値 5% の内側なので通知も出ません。
+3 つの warn が通知され、行動ログの重複(error)で止まり、終了コードは 1 でした。この挙動はテスト(`test_b13_quality.py`。pytest という、関数の名前が `test_` で始まるものを自動で探して流す道具で動かします)でも確かめています。5 つの欠陥のうち、遅れて届く行(3.0%)は閾値 5% の内側で、しかも重大度が `info` なので、表に記録されるだけで通知は出ません。
 
 ## 結果を残して見える化する
 
@@ -445,7 +450,7 @@ ORDER BY d;
 └────────────┴───────┴────────┴────────┘
 ```
 
-180 日のうち 2 日が引っかかりました。ねぼすけ商店のデータは、行動ログの時刻を乱数で作っていて、この 2 日に意図した欠陥はありません。つまり、これは偶然のばらつきによる誤検知です。2 日連続になったのにも理由があります。24 日の大きな値が、25 日の基準(直前 28 日)に混ざって、基準そのものを動かすからです。Z スコアは、次の点を知って使います。
+180 日のうち 2 日が引っかかりました。ねぼすけ商店のデータは、行動ログの時刻を乱数で作っていて、この 2 日に意図した欠陥はありません。つまり、これは偶然のばらつきによる誤検知です。Z スコアは、次の点を知って使います。なお 2 日連続になったのは、高い日が続いただけです。それよりも、ひどく大きな値が基準の 28 日に混ざると、平均と標準偏差が引き上げられて、その後の日の Z が小さくなり、本物の異常を見逃しやすくなります(これを「マスキング」と呼びます)。
 
 - 「±3 を超えたら異常」は、分布が釣り鐘型に近いときの目安です。1 日 20 件ほどの小さな件数は、きれいな釣り鐘型になりません。
 - 日数を見れば、偶然でも超える日は出ます。だから分布の確認は、error ではなく warn にします。
@@ -473,28 +478,30 @@ def volume_zscore(table, column, day, z_max=3.0, severity="warn"):
 
 error で止めたあと、データは放置できません。行動ログの重複は、ただ止めるのではなく、重複した行だけを避けて先へ進めたい。そのとき使うのが隔離(quarantine)テーブルです。悪い行を捨てず、理由を付けて別の表へ移します。
 
-まず、各 `event_id` の最初に届いた 1 行を `events_clean` に残します。
+最初に、同じ `event_id` の中で、先に届いた順に 1, 2, ... と番号を付けた表を作ります。`row_number()` は第6章のウィンドウ関数です。重複した行はまったく同じ中身なので、`received_at` だけで並べると同順位になり、どれが 1 番になるかが実行のたびに変わりえます。そこで、DuckDB の行番号 `rowid`(PostgreSQL なら `ctid`)を並べ替えの最後に足し、番号が必ず一意に決まるようにします。残す行と隔離する行は、この 1 つの番号から作るので、両者が食い違うことはありません。
+
+```sql
+CREATE OR REPLACE TABLE events_ranked AS
+SELECT *, row_number() OVER (PARTITION BY event_id ORDER BY received_at, rowid) AS rn
+FROM events;
+```
+
+番号が 1 の行を `events_clean` に残します。
 
 ```sql
 CREATE OR REPLACE TABLE events_clean AS
 SELECT event_id, customer_id, event_type, event_time, received_at
-FROM (
-    SELECT *, row_number() OVER (PARTITION BY event_id ORDER BY received_at) AS rn
-    FROM events
-)
+FROM events_ranked
 WHERE rn = 1;
 ```
 
-残りを、理由つきで `events_quarantine` に移します。
+2 以上の行を、理由つきで `events_quarantine` に移します。
 
 ```sql
 CREATE OR REPLACE TABLE events_quarantine AS
 SELECT event_id, customer_id, event_type, event_time, received_at,
        'duplicate_event_id' AS reason
-FROM (
-    SELECT *, row_number() OVER (PARTITION BY event_id ORDER BY received_at) AS rn
-    FROM events
-)
+FROM events_ranked
 WHERE rn > 1;
 ```
 
@@ -524,7 +531,7 @@ SELECT (SELECT count(*) FROM events) AS raw_rows,
 - **遅れて届いた行**: 正当なデータです。隔離せず、遅延の割合を warn で見ます。
 - **二重登録の顧客**: どちらが正しいか機械では決められません。隔離ではなく、持ち主に聞きます。
 
-隔離を作るときは、2 つ注意してください。1 つは、作り方を冪等(何度流しても同じ結果)にすることです。上の SQL は `CREATE OR REPLACE TABLE` で作り直しているので、再実行で重複が増えません(第12章)。もう 1 つは、隔離した行を誰かが見ることです。見る人がいない隔離テーブルは、データのごみ箱と同じです。隔離した件数は、確認として記録し、一定数を超えたら通知します。
+隔離を作るときは、2 つ注意してください。1 つは、作り方を冪等(何度流しても同じ結果)にすることです。上の SQL は `CREATE OR REPLACE TABLE` で作り直しているので、再実行で重複が増えません(第12章)。もう 1 つは、隔離した行を誰かが見ることです。見る人がいない隔離テーブルは、データのごみ箱と同じです。隔離した件数は、確認(`quarantine_ratio`)として記録し、元の行の 2% を超えたら通知します。`shop_checks("_clean")` には、この確認を入れてあります(今回は 40 / 4040 = 約 1.0% で合格します)。隔離が急に増えるのは、上流で何かが変わった合図です。
 
 ## dbt のテストで書く
 
@@ -600,11 +607,11 @@ SHOP_DB=../../../shop.duckdb dbt test --profiles-dir .
 
 ## Great Expectations・Soda・dbt-expectations
 
-ここまで自作の実行器と dbt のテストを見ましたが、現場では既存の道具を使うことが多いです。名前と考え方だけ、押さえておきます。詳細は公式の文書で確かめてください(2026年11月時点の整理です)。
+ここまで自作の実行器と dbt のテストを見ましたが、現場では既存の道具を使うことが多いです。名前と考え方だけ、押さえておきます。この本では動かさず、考え方の紹介にとどめます。使うときは公式の文書で書き方を確かめてください(2026年11月時点の整理です)。
 
 {{ table("b13-tools") }}
 
-**Great Expectations** は、「期待(Expectation)」を宣言して検証し、結果を保存して HTML で見せる Python のライブラリです。**Soda** は、`checks for テーブル名:` のような YAML の短い言語(SodaCL)で確認を書きます。**dbt-expectations** は、Great Expectations に着想を得た確認を dbt のテストとして使えるようにしたパッケージです。どれも、この章の「確認 = 期待を宣言する + 流す + 結果を残す」の延長にあります。
+**Great Expectations** は、「期待(Expectation)」を宣言して検証し、結果を保存して HTML で見せる Python のライブラリです。**Soda** は、`checks for テーブル名:` のような YAML の短い言語(SodaCL)で確認を書きます(これは Soda Core v3 の書き方です。Soda Core 4 系では、データ契約の YAML に確認を書く形に移っています。参考文献のリリースノートを参照してください)。**dbt-expectations** は、Great Expectations に着想を得た確認を dbt のテストとして使えるようにしたパッケージです。どれも、この章の「確認 = 期待を宣言する + 流す + 結果を残す」の延長にあります。
 
 選び方の目安は、(1) すでに dbt で変換しているなら、まず dbt のテストから始めて足りない部分を dbt-expectations で補う、(2) SQL の外にあるデータ(ファイルや Python の中のデータ)を見たいなら Great Expectations、(3) SQL を書かない人にも確認を書いてもらいたいなら Soda、です。ただし、道具を足す前に「どの観点を、どこで、どの重大度で」確かめるかを決めておかないと、どの道具でも同じ迷い方をします。この章の自作の実行器は、その決め方を試すための小さな模型です。
 
@@ -630,7 +637,7 @@ SHOP_DB=../../../shop.duckdb dbt test --profiles-dir .
 連絡先: 計測基盤チーム
 ```
 
-「持ち主」は、確認ごとに決めておきます。ねぼすけ商店なら、メールの欠けと二重登録は会員登録フォームの担当、行動ログの二重配信は計測基盤の担当、表記ゆれは注文システムの担当、と仮に割り振れます。二重配信は、再送を許す配信方式で起きやすい現象です(ストリーミングは第15章で扱います)。確認の定義に `owner` を持たせるのも、有効な方法です。持ち主との合意を契約として文書にする方法は、応用編のデータ契約で扱います。
+「持ち主」は、確認ごとに決めておきます。ねぼすけ商店なら、メールの欠けと二重登録は会員登録フォームの担当、行動ログの二重配信は計測基盤の担当、表記ゆれは注文システムの担当、と仮に割り振れます。二重配信は、再送を許す配信方式で起きやすい現象です(ストリーミングは第15章で扱います)。確認の定義に `owner` を持たせておくと、通知に持ち主が添えられます(`Check(..., owner="計測基盤チーム")` の形で、通知は `(持ち主: 計測基盤チーム)` と付きます)。持ち主との合意を契約として文書にする方法は、応用編のデータ契約で扱います。
 
 ## よくある失敗
 
@@ -679,35 +686,56 @@ SHOP_DB=../../../shop.duckdb dbt test --profiles-dir .
 
     結果は 0 です。`SHIPPED` の 59 行が `shipped` に揃い、4 種類に収まります。確認は、直したあとに「直ったこと」を測るためにも使います。
 
-**問3.** 注文明細の `quantity` が 1 以上であること(範囲の確認)を、`Check` を直接書いて作ってください。観点は「正確さ」、重大度は error とします。
+**問3.** 注文明細の `unit_price` が、商品表の `price` と違う行を数える `Check` を書いてください。重大度は warn と error のどちらにしますか。理由も述べてください。
 
 ??? note "解答例"
-    `exercises.py` の `QUANTITY_POSITIVE` です。
+    `exercises.py` の `PRICE_MATCHES` です。
 
     ```python
-    QUANTITY_POSITIVE = Check(
-        "order_items.quantity_positive", "正確さ", "error",
-        "SELECT count(*) FILTER (WHERE quantity < 1), count(*) FROM order_items")
+    PRICE_MATCHES = Check(
+        "order_items.unit_price_matches_products", "正確さ", "error",
+        "SELECT count(*) FILTER (WHERE i.unit_price <> p.price), count(*) "
+        "FROM order_items AS i JOIN products AS p ON i.product_id = p.product_id")
     ```
 
-    実行すると、悪い行は 0、見た行は 7469 で、合格します。新しい種類の確認は、「悪い行を数える SELECT」を書いて `Check` に包むだけです。
+    悪い行は 0、見た行は 7469 で合格します。わざと 1 行の単価を書き換えると不合格になります(テストで確かめています)。重大度は error にします。単価の食い違いは売上の合計を直接ゆがめ、集計が使われたあとでは直しにくいからです。ただし、商品の値上げのあとに過去の注文の単価が変わるのは正常なので、現場では「注文時点の価格」を持つ表と比べる必要があります。何と比べるかを決めるのが、正確さの確認の難しいところです。
 
-**問4.** 遅れて届いた行の閾値を 5% から 2% に下げると、`events_late_arrival` はどうなりますか。そのとき、warn は誰に伝えるべきか、理由も含めて答えてください。
+**問4.** 受信時刻 `received_at` が発生時刻 `event_time` より前の行(端末の時計のずれが疑われる行)を数える確認を warn で書き、結果を述べてください。
 
 ??? note "解答例"
-    遅れた行は 122 / 4040 = 約 3.0% で、2% を超えるため不合格になり、warn なので通知が出て処理は続きます(`late_arrival(..., max_ratio=0.02)` でテストしています)。遅れて届く原因には、端末が通信できない時間があった、計測基盤の再送が遅れた、などが考えられますが、どちらも元のデータを作っている側(計測基盤の担当)の領域です。通知は、変換を作っている自分たちだけでなく、持ち主に届く宛先へ出します。閾値を下げるときは、「遅れが 2% を超えたら、日次の集計をやり直す」のように、通知のあとの行動も決めておくと、確認が意味を持ちます。
+    `exercises.py` の `RECEIVED_BEFORE_EVENT` です。
+
+    ```python
+    RECEIVED_BEFORE_EVENT = Check(
+        "events.received_not_before_event", "正確さ", "warn",
+        "SELECT count(*) FILTER (WHERE received_at < event_time), count(*) FROM events")
+    ```
+
+    このデータでは悪い行は 0 で、合格します。日時は `YYYY-MM-DD HH:MM:SS` の文字列なので、文字列のまま比べても時刻順になります(第2章)。欠陥が無いことを確かめるのも、確認の大事な役目です。「いま問題が無い」ことが、あとで時計のずれが入り込んだときに気づける土台になります。
+
+**問5.** 隔離の流れを自分で動かしてください。`make_events_ranked`・`make_events_clean`・`make_events_quarantine`・`split_balance` の順に流し、件数が合うことを確かめます。そのあと `quality.py` を流すと、何が変わりますか(`quality.py` は元の `events` を見ます)。
+
+??? note "解答例"
+    次のコマンドで流します。
+
+    ```bash
+    python examples/b05/run_sql.py examples/b13/queries.sql make_events_ranked make_events_clean make_events_quarantine split_balance
+    ```
+
+    `split_balance` は 4040・4000・40 になり、4040 = 4000 + 40 が確かめられます。`quality.py` は、隔離前の `events` を見ているので、今回の流れでは変わらず、行動ログの重複で止まります。隔離後の表を確かめるには `shop_checks("_clean")` を渡します(テスト `test_quarantine_then_gate_passes` がその流れです)。本番では、隔離の処理をパイプラインの一部にして、そのあとに確認を流す順番にします。
 
 ## 参考文献
 
 - dbt Documentation, “Add data tests to your DAG”, <https://docs.getdbt.com/docs/build/data-tests>(2026年11月時点)
 - dbt Documentation, “severity, error_if, and warn_if”, <https://docs.getdbt.com/reference/resource-configs/severity>
 - dbt Documentation, “store_failures”, <https://docs.getdbt.com/reference/resource-configs/store_failures>
-- DuckDB Documentation, “FILTER Clause”, <https://duckdb.org/docs/current/sql/query_syntax/filter.html>
+- DuckDB Documentation, “FILTER Clause”, <https://duckdb.org/docs/current/sql/query_syntax/filter>
 - PostgreSQL Documentation, “Constraints”, <https://www.postgresql.org/docs/current/ddl-constraints.html>
-- Google Cloud, “Use primary and foreign keys”(BigQuery の `NOT ENFORCED`), <https://cloud.google.com/bigquery/docs/primary-foreign-keys>
-- Snowflake Documentation, “Constraints”(標準テーブルでは NOT NULL 以外を強制しない), <https://docs.snowflake.com/en/sql-reference/constraints-overview>
+- Google Cloud, “Use primary and foreign keys”(BigQuery の `NOT ENFORCED`), <https://docs.cloud.google.com/bigquery/docs/primary-foreign-keys>
+- Snowflake Documentation, “Constraints”(標準テーブルでは NOT NULL と CHECK 以外を強制しない), <https://docs.snowflake.com/en/sql-reference/constraints-overview>
 - Great Expectations Documentation, <https://docs.greatexpectations.io/docs/home/>
-- Soda Documentation, <https://docs.soda.io/>
+- Soda Documentation, <https://docs.soda.io/>、Soda Core Release Notes, <https://docs.soda.io/release-notes/soda-core-release-notes>
+- DAMA UK, “The Six Primary Dimensions for Data Quality Assessment”(2013)
 - dbt-expectations (Metaplane), <https://github.com/metaplane/dbt-expectations>
 
 !!! tip "さらに深く"

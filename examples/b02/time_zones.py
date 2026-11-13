@@ -41,3 +41,8 @@ differing = [d for d in sorted(jst_counts) if jst_counts[d] != utc_counts.get(d,
 print(len(jst_counts), "日のうち件数が食い違う日:", len(differing))
 day = max(differing, key=lambda d: jst_counts[d])  # 件数がいちばん多い日で見る
 print(day, "JST:", jst_counts[day], "UTC:", utc_counts[day])
+
+# 練習問題 3 の答え合わせ: 時差が 30 分刻みの地域（インド標準時 UTC+5:30）
+kolkata_counts = daily_counts(orders, ZoneInfo("Asia/Kolkata"))
+kolkata_differing = [d for d in sorted(jst_counts) if jst_counts[d] != kolkata_counts.get(d, 0)]
+print("Kolkata で食い違う日:", len(kolkata_differing))

@@ -1,5 +1,7 @@
+import pytest
 import time_zones
 import data_types  # noqa: F401  (import すると実験が走り、例外が出ないことを確かめる)
+import duckdb
 import row_vs_column
 import text_encoding  # noqa: F401
 
@@ -24,9 +26,22 @@ def test_timezone_boundaries():
     assert sum(time_zones.jst_counts.values()) == sum(time_zones.utc_counts.values())
 
 
+def test_kolkata_differs_less_than_utc():
+    assert len(time_zones.kolkata_differing) == 135
+    assert len(time_zones.differing) == 145
+
+
 def test_float_errors():
     assert 0.1 + 0.2 != 0.3
     assert data_types.total != 1.0
     assert int(0.29 * 100) == 28
     assert len(data_types.float_wrong) > 0
     assert int(data_types.big) != int(float(data_types.big))
+
+
+def test_int32_overflow_and_nfc():
+    with pytest.raises(duckdb.OutOfRangeException):
+        duckdb.connect().execute("SELECT 2147483647::INTEGER + 1")
+    assert text_encoding.composed != text_encoding.decomposed
+    import unicodedata
+    assert unicodedata.normalize("NFC", text_encoding.decomposed) == text_encoding.composed

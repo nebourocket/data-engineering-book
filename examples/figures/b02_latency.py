@@ -10,43 +10,28 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[2]
+from _style import use_japanese_font  # noqa: E402
 
-# CSV の日本語の操作名を、図に使う英語のラベルに対応させます（図のフォントに日本語が無いため）。
-LABELS = {
-    "L1 キャッシュの参照": "L1 cache reference",
-    "分岐予測のはずれ": "Branch mispredict",
-    "L2 キャッシュの参照": "L2 cache reference",
-    "ミューテックスのロックと解除": "Mutex lock/unlock",
-    "メインメモリの参照": "Main memory reference",
-    "1 KB を Zippy で圧縮": "Compress 1 KB (Zippy)",
-    "1 Gbps のネットワークで 1 KB を送る": "Send 1 KB over 1 Gbps",
-    "SSD から 4 KB をランダムに読む": "Random read 4 KB, SSD",
-    "メモリから 1 MB を順に読む": "Sequential read 1 MB, memory",
-    "同じデータセンター内の往復": "Round trip, same datacenter",
-    "SSD から 1 MB を順に読む": "Sequential read 1 MB, SSD",
-    "ディスクのシーク": "Disk seek",
-    "ディスクから 1 MB を順に読む": "Sequential read 1 MB, disk",
-    "カリフォルニア → オランダ → カリフォルニアのパケット": "Packet CA -> Netherlands -> CA",
-}
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def main() -> None:
+    use_japanese_font()
     with open(ROOT / "data" / "tables" / "b02-latency.csv", encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
-    names = [LABELS[r["操作"]] for r in rows]
+    names = [r["操作"] for r in rows]
     values = [float(r["時間(ナノ秒)"]) for r in rows]
 
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(9, 4.5))
     bars = ax.barh(names, values, color="#81A1C1")
     ax.set_xscale("log")
     ax.invert_yaxis()
-    ax.set_xlabel("Time (ns, log scale; each gridline is 10x)")
+    ax.set_xlabel("時間（ナノ秒、対数軸。目盛りが 1 つ進むと 10 倍）")
     ax.bar_label(bars, labels=[f"{v:g} ns" for v in values], padding=3, fontsize=8)
     ax.set_xlim(0.1, max(values) * 30)
     ax.grid(axis="x", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_title("Latency numbers (about 2012 figures; orders of magnitude only)", fontsize=11)
+    ax.set_title("操作ごとの時間の桁（2012 年ごろの値。桁の目安）", fontsize=11)
     fig.tight_layout()
 
     out = ROOT / "book" / "assets" / "figures"

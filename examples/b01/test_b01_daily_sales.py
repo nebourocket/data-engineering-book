@@ -12,6 +12,7 @@ def test_cancelled_orders_are_excluded(tmp_path):
     counted = con.execute(f"SELECT sum(sales) FROM ({daily_sales.DAILY_SALES_SQL})").fetchone()[0]
     everything = con.execute(daily_sales.ALL_SALES_SQL).fetchone()[0]
     assert 0 < counted < everything
+    assert con.execute(daily_sales.SHIPPED_COUNT_SQL).fetchone() == (925, 984)
     days = con.execute(daily_sales.DAILY_SALES_SQL).fetchall()
     assert days == sorted(days)
     con.close()

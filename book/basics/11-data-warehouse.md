@@ -344,9 +344,20 @@ BigQuery・Snowflake・Redshift・Databricks にもマテリアライズドビ�
 
 {{ table("b11-costly-queries") }}
 
-この中で、いちばん多いのは `SELECT *` です。先の実測で、同じ 1 ファイルでも、2 列のときの約 80 kB が約 348 kB になりました。列指向では、読む量が列の数に比例して増えます。確認のために中身を見たいときに `LIMIT 10` を付けても、読む量が減るとは限りません。BigQuery の料金に関する文書には、`SELECT *` に `LIMIT` を付けても読むデータ量は変わらない、という趣旨の説明があります。製品とクエリの形で変わるので、実行後に読んだ量を確かめます。
+この中で、よく見かけるのは `SELECT *` です。先の実測で、同じ 1 ファイルでも、2 列のときの約 80 kB が、全 8 列では約 348 kB（約 4.3 倍）になりました。列指向では、読む列が増えるほど読む量が増えます。確認のために中身を見たいときに `LIMIT 10` を付けても、読む量が減るとは限りません。BigQuery では、クラスタ化していないテーブルに `LIMIT` を付けても読むバイト数は減らず、クラスタ化したテーブルでは減ることがあります（`SELECT *` に限った話ではありません）。製品とクエリの形で変わるので、実行後に読んだ量を確かめます。
 
-直し方の基本は、「必要な列だけを書く」「パーティション列を、そのままの形で条件に書く」「大きな表から同じ集計を繰り返さない」の 3 つです。クエリを直したら、読んだ量が下がったかを、`EXPLAIN ANALYZE` や製品のクエリ履歴で必ず確かめます。確かめない最適化は、効いたかどうかが分かりません。
+直し方の基本は、「必要な列だけを書く」「パーティション列を、そのままの形で条件に書く」「大きな表から同じ集計を繰り返さない」の 3 つです。クエリを直したら、読んだ量が下がったかを、`EXPLAIN ANALYZE` や製品のクエリ履歴で確かめます。
+
+**実行前に見積もる。** BigQuery には、クエリを実行せずに、処理するバイト数だけを見積もる dry run があります。`bq` コマンドの例です（自分のプロジェクトが要ります。無料で試せるサンドボックスという仕組みもあります。本書のテストでは実行していません）。
+
+```bash
+bq query --use_legacy_sql=false --dry_run \
+  'SELECT sum(quantity * unit_price) FROM `my_project.neboske.sales` WHERE month = "2026-03"'
+```
+
+**結果のキャッシュ。** 同じクエリをもう一度流すと、前回の結果を再利用し、課金されない製品があります（BigQuery と Snowflake に、その仕組みの文書があります）。ただし、元の表が変わったとき、非決定的な関数を使うときなど、使われない条件があります。ダッシュボードが同じクエリを何度も流すときは、キャッシュが効く書き方かどうかも確かめます。
+
+**同時実行とワークロードの分離。** 夜間バッチと、朝の BI の画面が、同じ計算資源を取り合うと、どちらも遅くなります。ストレージと計算を分離した製品では、用途ごとに計算資源（ウェアハウスやスロットの予約）を分けて、お互いに影響させない設計ができます。分けるほど、止め忘れの数と費用の管理が増えます。
 
 ## アクセス制御の入口
 
@@ -384,6 +395,7 @@ psql:<stdin>:7: ERROR:  permission denied for table sales_lines
 - 計算資源を止め忘れる。課金が時間単位の製品では、使っていない時間も請求に出る。
 - 課金の見積もりを、手元の DuckDB の読んだ量と取り違える。数え方は製品ごとに違い、比の目安にしかならない。
 - 「全員が全部を読める」状態で DWH を公開する。
+- クエリの結果のキャッシュが効く前提で費用を見積もり、実際には毎回課金される。
 
 ## まとめ
 
@@ -397,16 +409,27 @@ psql:<stdin>:7: ERROR:  permission denied for table sales_lines
 
 ## 練習問題
 
-問 1. 4 月と 5 月の売上の合計を出してください。開いたファイルの数は何個になりますか。
+問 1. 月ごとの表 `monthly`（月、売上の合計、件数）が、すでにあります。6 月に 1 日分（売上 12,000 円、3 明細）が届いたとして、元の `sales` を読み直さずに、`monthly` の 6 月の行だけを差分で更新してください。更新後の 1 明細あたりの平均はいくらですか。
 
 ??? note "解答例"
     ```sql
-    SELECT sum(quantity * unit_price) AS revenue
+    CREATE TABLE monthly AS
+    SELECT month, sum(quantity * unit_price) AS revenue, count(*) AS n
     FROM sales
-    WHERE month IN ('2026-04', '2026-05');
+    GROUP BY month;
+
+    CREATE TABLE new_day AS
+    SELECT '2026-06' AS month, 12000 AS revenue, 3 AS n;
+
+    UPDATE monthly
+    SET revenue = monthly.revenue + new_day.revenue, n = monthly.n + new_day.n
+    FROM new_day
+    WHERE monthly.month = new_day.month;
+
+    SELECT month, revenue, n, revenue / n AS avg_line FROM monthly WHERE month = '2026-06';
     ```
 
-    答えは 413,857,050 で、開いたファイルは 6 個のうち 2 個です（`python examples/b11/run_query.py ex_two_months` の出力にある `files_read` が 2）。月の売上の表（258,292,600 と 155,564,450）を足した値と一致します。パーティション列 `month` が `IN` で並んでいても、必要なフォルダだけを開きます。
+    6 月は、売上 46,839,300・件数 7,642 になり、平均は約 6,129.19 です（`python examples/b11/run_query.py ex_incremental`）。合計と件数を持ち越していれば、新しい日の分を足すだけで平均が正しく出ます。平均そのものを持ち越していたら、この更新はできません。`UPDATE ... FROM` は DuckDB と PostgreSQL にあり、製品によっては `MERGE` で書きます。
 
 問 2. 3 月 5 日の 1 日分の売上を、`month = '2026-03'` の条件を付けた場合と付けない場合で出してください。開いたファイルの数と、読んだバイト数がどう違いますか。
 
@@ -429,12 +452,21 @@ psql:<stdin>:7: ERROR:  permission denied for table sales_lines
 問 3. クラスタリングの例で、`customer_id` 順に並べたファイルに `product_id = 7` で絞って数えたとき、読む行グループはいくつですか。理由も説明してください。
 
 ??? note "解答例"
-    `examples/b11/clustering_demo.py` の `row_groups_scanned` に `column="product_id", value=7` を渡すと、`customer_id` 順のファイルでも 15 / 15 の行グループをすべて読みます（ばらばらのファイルも同じ 15 / 15 です）。並べたのは `customer_id` だけで、`product_id` は各行グループにばらばらに入っています。どの行グループにも、最小値と最大値の幅に 7 が入ってしまうので、読み飛ばせません。クラスタリングは、並べた列を条件にするクエリにだけ効きます。
+    `python examples/b11/clustering_demo.py --column product_id --value 7` で、`customer_id` 順のファイルでも 15 / 15 の行グループをすべて読みます（ばらばらのファイルも同じ 15 / 15 です）。並べたのは `customer_id` だけで、`product_id` は各行グループにばらばらに入っています。どの行グループにも、最小値と最大値の幅に 7 が入ってしまうので、読み飛ばせません。クラスタリングは、並べた列を条件にするクエリにだけ効きます。
 
-問 4. 月ごとの部分集計（月、売上の合計、件数）が表に残っているとします。この表だけから、全期間の 1 明細あたりの平均売上を出す式を書いてください。
+問 4. 月ごとに「その月に買った顧客の数」（`count(DISTINCT customer_id)`）を出し、6 か月分を足してください。全期間の顧客数を直接数えた値と比べて、何が起きていますか。
 
 ??? note "解答例"
-    `sum(revenue) / sum(n)` です。各月の `revenue` は月の売上の合計、`n` は月の明細数なので、全部足した合計を、全部足した件数で割れば、全体の平均になります。実測では 6186.0756 で、全体を直接 `avg` した値と一致します。`avg(revenue / n)` は月ごとの平均の平均で、6186.9170 と一致しません。月ごとの件数が違うのに、同じ重みで足しているからです。
+    ```sql
+    SELECT sum(customers) AS sum_of_monthly, (SELECT count(DISTINCT customer_id) FROM sales) AS overall
+    FROM (
+      SELECT month, count(DISTINCT customer_id) AS customers
+      FROM sales
+      GROUP BY month
+    ) AS monthly_customers;
+    ```
+
+    月ごとの合計は 3,015、全期間の直接の数は 506 で、一致しません。同じ顧客が複数の月に買うので、足すと何度も数えてしまうからです。合計・件数・最小・最大は部分集計から合算できますが、重複を除いた件数（や中央値）は、そのままでは合算できません。分散するエンジンは、こうした集計に別の方法（顧客の一覧を集める、近似のアルゴリズムを使うなど）を使います。
 
 ## 参考文献
 
@@ -446,6 +478,8 @@ psql:<stdin>:7: ERROR:  permission denied for table sales_lines
 - DuckDB, “Why DuckDB”（列指向とベクトル化実行）, <https://duckdb.org/why_duckdb>
 - P. Boncz, M. Zukowski, N. Nes, “MonetDB/X100: Hyper-Pipelining Query Execution”, CIDR 2005, <https://www.cidrdb.org/cidr2005/papers/P19.pdf>
 - Google Cloud, BigQuery “Pricing”（2026年11月時点）, <https://cloud.google.com/bigquery/pricing>
+- Google Cloud, BigQuery “Estimate and control costs” の dry run: <https://cloud.google.com/bigquery/docs/dry-run-queries> ／ “Using cached query results”, <https://cloud.google.com/bigquery/docs/cached-results> ／ “Sandbox”, <https://cloud.google.com/bigquery/docs/sandbox>
+- Snowflake Documentation, “Using persisted query results”, <https://docs.snowflake.com/en/user-guide/querying-persisted-results>
 - Google Cloud, BigQuery “Introduction to partitioned tables”, <https://cloud.google.com/bigquery/docs/partitioned-tables> ／ “Introduction to clustered tables”, <https://cloud.google.com/bigquery/docs/clustered-tables> ／ “Introduction to materialized views”, <https://cloud.google.com/bigquery/docs/materialized-views-intro> ／ “Estimate and control costs”, <https://cloud.google.com/bigquery/docs/best-practices-costs>
 - Snowflake Documentation, “Understanding compute cost”（2026年11月時点）, <https://docs.snowflake.com/en/user-guide/cost-understanding-compute> ／ “Micro-partitions & Data Clustering”, <https://docs.snowflake.com/en/user-guide/tables-clustering-micropartitions> ／ “Materialized views”, <https://docs.snowflake.com/en/user-guide/views-materialized>
 - Amazon Redshift, “Pricing”（2026年11月時点）, <https://aws.amazon.com/redshift/pricing/> ／ “Sort keys”, <https://docs.aws.amazon.com/redshift/latest/dg/c_best-practices-sort-key.html> ／ “Data warehouse system architecture”, <https://docs.aws.amazon.com/redshift/latest/dg/c_high_level_system_architecture.html> ／ “Materialized views”, <https://docs.aws.amazon.com/redshift/latest/dg/materialized-view-overview.html>

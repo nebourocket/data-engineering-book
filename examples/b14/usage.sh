@@ -1,4 +1,7 @@
 # 第 14 章で打つコマンド (リポジトリの直下で流す。docker が使える端末が必要)
+# python のスクリプトを開発用イメージの中で流すとき (docker のコマンドは手元の端末で流す)
+docker run --rm -it --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/w -w /w de-book-dev bash
+
 # MinIO を起動して、準備ができるまで待つ (リポジトリの直下で)
 docker compose up -d --wait
 
@@ -25,3 +28,6 @@ S3_ENDPOINT=http://localhost:9000 S3_ACCESS_KEY=minioadmin S3_SECRET_KEY=minioad
 
 # 設定ファイルの形の検査を含むテスト
 pytest examples/b14
+
+# IAM ポリシーを検査する (examples/b14 の中で)
+(cd examples/b14 && python -c "import static_checks as sc; print(sc.policy_problems(open('iam_read_policy.json').read()))")

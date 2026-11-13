@@ -1,4 +1,7 @@
 # 第 13 章で打つコマンド (リポジトリの直下で、docker run した開発用イメージの中などで流す)
+# 開発用イメージの中に入る (python と dbt を使うときは、この中で流す)
+docker run --rm -it --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/w -w /w de-book-dev bash
+
 # 品質確認を流す。error の不合格があると終了コード 1 で止まる。
 python examples/b13/quality.py; echo "exit=$?"
 

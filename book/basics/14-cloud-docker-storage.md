@@ -12,6 +12,16 @@
 
 この本のコード例は、これまで Docker の中で動かしてきました。この章は、その Docker の中身と、データの置き場所であるクラウドのストレージを、手を動かして理解する章です。クラウドの契約は不要で、PostgreSQL・MinIO・Redpanda を動かす `compose.yaml` だけで試せます。MinIO は、S3 と同じ API を話す、手元で動くオブジェクトストレージです。
 
+## この章のコマンドを流す場所
+
+コマンドは 2 種類の場所で流します。`docker ...` と `docker compose ...` は、Docker が動いている**手元の端末**(WSL など)で流します。`python ...` のスクリプト(`make_input.py`、`demo_storage.py` など)と `pytest` は、第4章までに使った**開発用イメージの中**で流します。イメージの中には次の 1 行で入ります。`-it` は端末をつなぐ、`--network host` は手元の `localhost:9000` の MinIO に届かせる、`-v "$PWD":/w` は今いるフォルダをイメージの `/w` に見せる、という指定です。
+
+```bash
+docker run --rm -it --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/w -w /w de-book-dev bash
+```
+
+イメージを使わず手元で流すなら、`pip install -r requirements.txt` で道具を入れてから同じ `python` コマンドを流しても構いません。以降の本文は、「python は開発用イメージの中、docker は手元の端末」で統一します。
+
 ## クラウドの基本
 
 クラウドは、サーバーやストレージを、必要な分だけ借りて使う仕組みです。データエンジニアの仕事では、データを置く場所(ストレージ)と、処理を動かす場所(計算)を借りることがほとんどです。最初に押さえる言葉は 6 つです。
@@ -42,6 +52,8 @@
   ]
 }
 ```
+
+この JSON の読み方です。`Version` はポリシーの書式の版で、`2012-10-17` と書くのが決まりです。`Statement` は許可の規則の一覧で、1 つの `{ ... }` が 1 つの規則です。`Sid` は規則の名札で、読みやすい名前を付けます。`Effect` は `Allow`(許す)か `Deny`(禁じる)です。`Action` は許す操作で、`s3:GetObject`(オブジェクトを読む)のように「サービス名:操作名」と書きます。`Resource` は操作の対象で、**ARN**(Amazon Resource Name)という、AWS のものを一意に指す名前で書きます。S3 の ARN は、バケットなら `arn:aws:s3:::バケット名`、中のオブジェクトなら `arn:aws:s3:::バケット名/キー` です。`Condition` は追加の条件で、`StringLike` は文字列がパターンに合うかを見ます(`*` は任意の文字列)。上の例では、一覧の許可を `events/` で始まる接頭辞に絞っています。
 
 見落としやすいのは `Resource` です。一覧(`s3:ListBucket`)の対象は「バケット」なので、`arn:aws:s3:::deb-lake` と書きます。読み取り(`s3:GetObject`)の対象は「オブジェクト」なので、`.../events/*` と書きます。ListBucket に `/*` を付けたり、GetObject にバケットだけを書いたりすると、意図どおりに動きません。`examples/b14/static_checks.py` の `policy_problems` は、`Action` が `*` や `s3:*` になっていないか、`Resource` が `*` でないか、この取り違えがないかを、読むだけで確かめます。
 
@@ -90,6 +102,8 @@ USER etl
 
 CMD ["python", "etl.py"]
 ```
+
+まず、1 行ずつ読みます。`FROM` は土台にするイメージで、ここから積み上げます。`ENV` は環境変数を決めます(`PYTHONDONTWRITEBYTECODE=1` は Python に `.pyc` の控えを書かせない設定、`PYTHONUNBUFFERED=1` は出力をためずにすぐ表示する設定です)。行末の `\` は、次の行へ続けるという印です。`WORKDIR /app` は、以降の命令を実行する作業フォルダを `/app` にします(無ければ作ります)。`COPY 元 先` は、手元のファイルをイメージの中へコピーします(`COPY --chown=etl:etl` は、持ち主を `etl` ユーザーにする指定です)。`RUN` は、イメージを作る途中でコマンドを 1 回実行します(`pip install` で道具を入れる、`useradd` でユーザーを作る、など)。`USER etl` は、以降の実行(コンテナが動くときも)を `etl` ユーザーにします。`CMD ["python", "etl.py"]` は、コンテナを起動したときに実行するコマンドです。
 
 表の 6 つの決まりを、この Dockerfile で確かめます。
 
@@ -149,7 +163,7 @@ docker run --rm --network host -v "$PWD/examples/b14/data":/data:ro \
 4040 行を 180 ファイルに書きました
 ```
 
-`-v` は、手元のフォルダをコンテナの `/data` に読み取り専用(`:ro`)で見せる設定です。`--network host` は、コンテナを手元のネットワークにそのまま繋ぎ、`localhost:9000` の MinIO に届くようにします(Docker Desktop では挙動が違うことがあります)。終わったら、リポジトリの直下で片付けます。
+`docker run` の指定を順に説明します。`--rm` は、終わったらコンテナを自動で消す指定です。`-e 名前=値` は、コンテナの中の環境変数を決めます(ETL はここから接続先を読みます)。`$PWD` は今いるフォルダの絶対パスで、`-v "$PWD/examples/b14/data":/data:ro` は、手元のそのフォルダをコンテナの `/data` として読み取り専用(`:ro`)で見せる指定です。最後の `neboske-etl:dev` が、使うイメージの名前です。`--network host` は、コンテナを手元のネットワークにそのまま繋ぎ、`localhost:9000` の MinIO に届くようにします(Docker Desktop では挙動が違うことがあります)。終わったら、リポジトリの直下で片付けます。
 
 ```bash
 docker compose down
@@ -213,14 +227,16 @@ services:
 - **ホスト名**: 同じ compose の中では、サービス名(`minio`)がそのままホスト名になります。コンテナの中の `localhost` は、そのコンテナ自身を指すので、`http://localhost:9000` と書くと ETL からは届きません。
 - **秘密**: `${S3_ACCESS_KEY:-minioadmin}` は、環境変数が無ければ既定値を使う書き方です。値を YAML に直書きせず、外から渡せる形にしておきます。
 
-起動は次のコマンドです。
+起動する前に、入力の `./data/events.jsonl`(`examples/b14/data/events.jsonl`)を作っておく必要があります。`make_input.py` を流さずに起動すると、手元に `data` フォルダが無いため Docker が空のフォルダを作ってコンテナに見せ、`etl.py` が入力ファイルを見つけられずに失敗します。
+
+この本では、この compose の例を最後まで起動して確かめてはいません。確かめたのは、`docker compose -f compose.etl.yaml config` で設定が読めることと、後述の形の検査までです。ETL 単体(`docker run`)と MinIO 単体の動きは、前の節のとおり実際に流しています。次のコマンドは、その前提で読んでください。
 
 ```bash
 cd examples/b14
 docker compose -f compose.etl.yaml up --build --abort-on-container-exit
 ```
 
-9000 番は 1 つのサービスしか使えないので、この本の `compose.yaml` の MinIO が動いている間は、先に `docker compose down` するか、`MINIO_PORT=9100` のように公開するポートを変えて起動します。ETL がメッセージを出して終わると、`--abort-on-container-exit` によって MinIO も止まります。設定が読める形かどうかは、`docker compose -f compose.etl.yaml config` で確かめられます。
+9000 番は 1 つのサービスしか使えないので、この本の `compose.yaml` の MinIO が動いている間は、先に `docker compose down` するか、`MINIO_PORT=9100` のように公開するポートを変えて起動します。`--abort-on-container-exit` は、どれか 1 つのコンテナが終わったら全部を止める指定です。
 
 MinIO には、ブラウザで開く管理画面(コンソール)があります。この本の `compose.yaml` は 9001 番で公開しているので、`http://localhost:9001` を開き、ユーザー名とパスワードに `minioadmin` を入れると、バケットとオブジェクトを目で確かめられます。
 
@@ -361,6 +377,8 @@ def expire_prefix_after(client, bucket, prefix, days):
 ```
 
 **暗号化**には 2 つあります。通信の暗号化(https)と、保存時の暗号化(サーバー側暗号化)です。AWS の S3 は、保存時の暗号化が既定で有効です(文書の説明)。鍵の管理を自分で行いたいときは KMS(鍵管理サービス)を選びます。この本の MinIO では暗号化の指定を試していません。次の IaC の例で、設定として書きます。
+
+上のコードを、Python の基本から読みます。`tables = [pq.read_table(...) for k in keys]` は**リスト内包表記**で、「`keys` の 1 つ 1 つ(`k`)について式を計算し、結果をリストにする」書き方です。`for i in range(0, len(old), 1000)` は、0、1000、2000、…と 1000 ずつ増える `i` を作り、`old[i:i + 1000]` で「`i` 番目から 1000 個」の**スライス**(切り出し)を取ります。1 回に消せる上限が 1000 件なので、1000 件ずつ分けて消しています。`try: ... except ...:` は、`try` の中で起きたエラーを `except` で受け止める書き方です。ライフサイクルの関数では、「規則がまだ無い」というエラー(`NoSuchLifecycleConfiguration`)だけを「規則が 0 件」として扱い、それ以外のエラーは `raise` でそのまま投げ直しています。
 
 ### ローカルの MinIO にしかない癖
 
@@ -505,9 +523,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "lake" {
 
 ライフサイクル規則には、途中で終わった分割アップロードの残骸を 7 日で消す指定(`abort_incomplete_multipart_upload`)も足しました。失敗した分割アップロードの部品は、完了か中止をするまで保存の費用がかかり続けるためです。バージョニング(上書きや削除の前の版を残す機能)は、有効にすると古い版も費用になるので、この例では入れていません。読み方は、`resource "種類" "名前" { ... }` が 1 つのインフラの部品です。バケット本体、公開のブロック、保存時の暗号化、`tmp/` を 7 日で消すライフサイクル規則、の 4 つを書きました。バケット名は `var.bucket_name` として外から渡し、リージョンは `provider` に書きます。アクセスキーは書いていません。認証は、実行する人やロールの側に持たせます。
 
-Terraform を使う手順は、`terraform fmt`(書式をそろえる)・`terraform init`(プロバイダを取得する)・`terraform validate`(文法を確かめる)・`terraform plan`(現状との差分を表示する)・`terraform apply`(反映する)の順です。実際の状態を記録した state ファイルには機密が混ざることがあるので Git に入れず、チームで使うときは共有の場所に置きます。本書の環境には Terraform を入れていないので、ここでは読むだけの形の検査を書きました。
+Terraform を使う手順は、`terraform fmt`(書式をそろえる)・`terraform init`(プロバイダを取得する)・`terraform validate`(文法を確かめる)・`terraform plan`(現状との差分を表示する)・`terraform apply`(反映する)の順です。実際の状態を記録した state ファイルには機密が混ざることがあるので Git に入れず、チームで使うときは共有の場所に置きます。本書の環境には Terraform を入れていないので、かわりに読むだけの形の検査を書きました。
 
-`static_checks.terraform_problems` は、括弧の釣り合い、必須の部品、公開のブロック、鍵が書かれていないこと、バケット名が変数であることを読んで確かめます。
+この検査(`static_checks.terraform_problems`)は、括弧の釣り合い、必須の部品、公開のブロック、鍵が書かれていないこと、バケット名が変数であることを読んで確かめます。
 
 括弧の釣り合い、必須の部品、公開のブロック、鍵の有無を見ます。文法を理解した検査ではなく、手が滑ったときの安全網です。本物は、`terraform fmt -check`・`terraform validate`・`terraform plan` で、CI で毎回流します。`~> 6.0` というバージョン指定(6.x の最新を許す)は2026年11月時点の例なので、使うときは AWS プロバイダの文書で現在の版を確かめてください。
 
@@ -573,7 +591,13 @@ CMD python etl.py
 ??? note "解答例"
     `GetObject` の対象はバケットではなく、中のオブジェクトだからです。`arn:aws:s3:::deb-lake/events/*` のように、オブジェクトを指す形に直します。`policy_problems` は、この取り違えを検出します(`test_policy_checker_flags_getobject_on_bucket_only`)。逆に `s3:ListBucket` の対象は、バケットの ARN です。
 
-**問4.** 「バケット `deb-lake` の `reports/` 以下だけを読める」ポリシーを書いてください。一覧もできるようにします。書けたら `static_checks.policy_problems` に渡して、問題が出ないことを確かめてください。
+**問4.** 「バケット `deb-lake` の `reports/` 以下だけを読める」ポリシーを書いてください。一覧もできるようにします。書けたら `static_checks.policy_problems` に渡して、問題が出ないことを確かめてください。呼び出し方は次のとおりです(`examples/b14` の中で、ファイル名を自分のものに替えます)。
+
+```bash
+(cd examples/b14 && python -c "import static_checks as sc; print(sc.policy_problems(open('iam_read_policy.json').read()))")
+```
+
+問題が無ければ `[]`(空のリスト)が表示されます。
 
 ??? note "解答例"
     本文のポリシーの `events` を `reports` に置き換えた形です。`s3:ListBucket` は `arn:aws:s3:::deb-lake` に `Condition` で `s3:prefix` を `reports/*` に絞り、`s3:GetObject` は `arn:aws:s3:::deb-lake/reports/*` に付けます。`Action` や `Resource` に `*` だけを書かないこと、ListBucket はバケット、GetObject はオブジェクトを指すことが要点です。

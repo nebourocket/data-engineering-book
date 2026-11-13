@@ -84,12 +84,51 @@ EXPECT = {
     "from_sub": lambda r: r == [(2.49,)],
     "union_distinct": lambda r: r == [(505,)],
     "union_all": lambda r: r == [(7040,)],
+    "coalesce_email": lambda r: r == [(2, "(未登録)"), (26, "(未登録)"), (36, "(未登録)")],
+    "nullif_ratio": lambda r: len(r) == 10 and r[0] == (1, 1, 2, 0.5) and r[6][3] == 2.0,
+    "clean_values": lambda r: r == [("090-1234-5678", "09012345678", 12, None)],
+    "cast_error": lambda r: True,  # 実行すると失敗する例（test_cast_error で確かめる）
+    "distinct_pref": lambda r: len(r) == 10,
+    "except_customers": lambda r: r == [(261,)],
+    "intersect_customers": lambda r: r == [(504,)],
 }
 
 
-@pytest.mark.parametrize("name", sorted(QUERIES))
+@pytest.mark.parametrize("name", sorted(set(QUERIES) - {"cast_error"}))
 def test_query(con, name):
     assert EXPECT[name](rows(con, name)), rows(con, name)
+
+
+def test_cast_error(con):
+    """CAST は 1 件でも変換できないと全体が止まる。TRY_CAST は NULL にする。"""
+    with pytest.raises(duckdb.ConversionException, match="Could not convert string '12a'"):
+        con.execute(QUERIES["cast_error"])
+
+
+def test_ddl_in_order(tmp_path):
+    """表を作る・書き換える例。上から順に流す必要があるので、専用の DB で試す。"""
+    path = tmp_path / "shop.duckdb"
+    shop.write_duckdb(path)
+    con = duckdb.connect(str(path))
+    ddl = run_sql.split_queries((HERE / "ddl.sql").read_text(encoding="utf-8"))
+    for name, sql in ddl.items():
+        if name == "ddl_duplicate_key_error":
+            with pytest.raises(duckdb.ConstraintException, match="duplicate key"):
+                con.execute(sql)
+            continue
+        got = con.execute(sql).fetchall()
+        if name == "ddl_create_as":
+            assert got == [(12,)]
+        elif name == "ddl_count":
+            assert got == [(12,)]
+        elif name == "ddl_check":
+            assert got == [(999, "テスト商品", 200)]
+        elif name == "ddl_view_count":
+            assert got == [(10,)]
+    assert con.execute("SELECT count(*) FROM my_products").fetchone() == (12,)
+    # 元の products は変わっていない
+    assert con.execute("SELECT count(*) FROM products").fetchone() == (52,)
+    con.close()
 
 
 EXERCISES = run_sql.split_queries((HERE / "exercises.sql").read_text(encoding="utf-8"))
@@ -100,8 +139,9 @@ def test_exercises(con):
     dups = q("ex2_dup_registrations")
     assert len(dups) == 5 and {n for _, n in dups} == {2}
     assert q("ex2_null_group") == [(20,)]
-    # 6 月の注文: 末日に注文が無いので BETWEEN でも同じ件数になる
-    assert q("ex4_half_open") == [(155,)] == q("ex4_between")
+    # 3 月は 31 日に注文があるので BETWEEN だと落ちる。6 月は末日に注文が無く同じ件数になる
+    assert q("ex4_march_half_open") == [(820,)] and q("ex4_march_between") == [(789,)]
+    assert q("ex4_june_half_open") == [(155,)] == q("ex4_june_between")
     assert q("ex4_last_order") == [("2026-06-28 22:20:01",)]
     # 練習問題 1 と 3 の数字
     statuses = dict(rows(con, "group_status_lower"))

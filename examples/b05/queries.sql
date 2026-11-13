@@ -205,7 +205,7 @@ ORDER BY month;
 -- name: late_events
 SELECT count(*) AS late_events
 FROM events
-WHERE CAST(received_at AS TIMESTAMP) - CAST(event_time AS TIMESTAMP) > INTERVAL 1 DAY;
+WHERE CAST(received_at AS TIMESTAMP) - CAST(event_time AS TIMESTAMP) > INTERVAL '1 day';
 
 -- name: alias_where
 SELECT price * 2 AS double_price FROM products WHERE double_price > 11000;
@@ -249,3 +249,46 @@ FROM (
   UNION ALL
   SELECT customer_id FROM events
 ) AS u;
+
+-- name: coalesce_email
+SELECT customer_id, coalesce(email, '(未登録)') AS email
+FROM customers
+WHERE email IS NULL
+ORDER BY customer_id
+LIMIT 3;
+
+-- name: nullif_ratio
+SELECT customer_id,
+       count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+       count(*) FILTER (WHERE lower(status) = 'shipped') AS shipped,
+       count(*) FILTER (WHERE status = 'cancelled')
+         / nullif(count(*) FILTER (WHERE lower(status) = 'shipped'), 0) AS cancel_per_shipped
+FROM orders
+WHERE customer_id <= 10
+GROUP BY customer_id
+ORDER BY customer_id;
+
+-- name: clean_values
+SELECT trim('  090-1234-5678 ') AS trimmed,
+       replace('090-1234-5678', '-', '') AS digits,
+       TRY_CAST('12' AS INTEGER) AS good,
+       TRY_CAST('12a' AS INTEGER) AS bad;
+
+-- name: cast_error
+SELECT CAST('12a' AS INTEGER) AS n;
+
+-- name: distinct_pref
+SELECT DISTINCT prefecture FROM customers ORDER BY prefecture;
+
+-- name: except_customers
+SELECT customer_id FROM customers
+EXCEPT
+SELECT customer_id FROM orders;
+
+-- name: intersect_customers
+SELECT count(*) AS n
+FROM (
+  SELECT customer_id FROM orders
+  INTERSECT
+  SELECT customer_id FROM events
+) AS both_sides;

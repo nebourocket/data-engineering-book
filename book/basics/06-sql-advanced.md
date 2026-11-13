@@ -8,7 +8,7 @@
 - 重複排除と「各グループの最新 1 行」を、複数の書き方から選んで書ける。
 - 行動ログをセッションに分け、縦持ちの集計を横持ち（ピボット）に直せる。
 - `EXPLAIN` と `EXPLAIN ANALYZE` を読み、見積もりと実測のずれ、読んでいる列と行を確かめられる。
-- 索引が行指向の DB と列指向の DB で、どう違う効き方をするかを説明できる。
+- インデックスが行指向の DB と列指向の DB で、どう違う効き方をするかを説明できる。
 
 第 5 章のクエリが書ければ、この章に進めます。使うデータは同じ「ねぼすけ商店」で、クエリは `examples/b06/queries.sql` にあります。実行は第 5 章の `run_sql.py` と同じ要領です。
 
@@ -43,24 +43,16 @@ ORDER BY nth;
 
 もう 1 つ覚えておくのは、評価の順序です。ウィンドウ関数は `WHERE` `GROUP BY` `HAVING` の後に計算されるので、`WHERE` の中では使えません。PostgreSQL の文書にも同じ説明があります。ウィンドウ関数の結果で行を絞りたいときは、サブクエリで包むか、DuckDB の `QUALIFY`（後述）を使います。
 
-この節以降のいくつかのクエリは、日別の売上を使います。キャンセル以外の注文の売上を日ごとに集計した一時ビューを作っておきます。
+この節以降のいくつかのクエリは、日別の売上を使います。キャンセル以外の注文の売上を日ごとに集計したビューを作っておきます。ビューは `shop.duckdb` に残るので、一度作れば、後のクエリは名前を指定して 1 つずつ流せます。
 
 ```sql
-CREATE OR REPLACE TEMP VIEW daily_sales AS
+CREATE OR REPLACE VIEW daily_sales AS
 SELECT CAST(o.ordered_at AS DATE) AS d,
        sum(i.quantity * i.unit_price) AS revenue
 FROM orders AS o
 INNER JOIN order_items AS i USING (order_id)
 WHERE lower(o.status) <> 'cancelled'
 GROUP BY d;
-```
-
-```text
-┌────────┐
-│ Count  │
-│ int64  │
-└────────┘
-  0 rows
 ```
 
 ```sql
@@ -74,6 +66,12 @@ SELECT count(*) AS days, min(d) AS first_day, max(d) AS last_day FROM daily_sale
 ├───────┼────────────┼────────────┤
 │   171 │ 2026-01-04 │ 2026-06-28 │
 └───────┴────────────┴────────────┘
+```
+
+手元で試すときは、第 5 章の `run_sql.py` に、ビューを作るクエリと、それを使うクエリの名前を並べて渡します。`daily_sales_view` を先に流す必要があります。ビューを作る前に `moving_avg_frames` だけを流すと、`daily_sales` が無いというエラーになります。
+
+```bash
+python examples/b05/run_sql.py examples/b06/queries.sql daily_sales_view moving_avg_frames
 ```
 
 注文のあった日は 171 日分です。1 月 4 日から 6 月 28 日まで 176 日あるので、注文のない日が 5 日あります。この「日が欠けている」ことが、後の移動平均で効いてきます。
@@ -138,7 +136,7 @@ ORDER BY ordered_at;
 └──────────┴─────────────────────┴─────────────────────┴─────────────────┘
 ```
 
-最初の行には前の行が無いので `NULL` です。`lag(列, 2, 0)` のように、行数と、無いときの既定値を指定できます。`PARTITION BY customer_id` を足せば、全注文から顧客ごとの間隔を出せます（練習問題 2）。
+最初の行には前の行が無いので `NULL` です。なお、DuckDB の `date_diff('day', ...)` は、2 つの時刻の間にある日付の境目の数を数えます。経過時間ではなく暦の日の差です。0 時 5 分と、その前日の 23 時 55 分は、10 分しか離れていなくても 1 日の差になります。経過時間を測りたいときは、`date_diff('second', ...)` などで秒を求めて割ります。以下の「日数」は、すべて暦の日の差です。`lag(列, 2, 0)` のように、行数と、無いときの既定値を指定できます。`PARTITION BY customer_id` を足せば、全注文から顧客ごとの間隔を出せます（練習問題 2）。
 
 ## 累積和と全体に占める割合
 
@@ -164,7 +162,7 @@ LIMIT 4;
 └────────────┴─────────┴───────────────┘
 ```
 
-`OVER ()` のように中身を空にすると、全体が 1 つの窓になります。集約の結果を、さらに全体で割る使い方ができます。カテゴリごとの価格合計が、全体のどれだけを占めるかです。
+`OVER ()` のように中身を空にすると、全体が 1 つのウィンドウになります。集約の結果を、さらに全体で割る使い方ができます。カテゴリごとの価格合計が、全体のどれだけを占めるかです。
 
 ```sql
 SELECT category,
@@ -198,16 +196,16 @@ ORDER BY category_price DESC;
 
 {{ table("b06-frame-units") }}
 
-7 日間の移動平均を、`ROWS` と `RANGE` の両方で計算します。`days_in_range` は、窓に実際に入った日数です。
+7 日間の移動平均を、`ROWS` と `RANGE` の両方で計算します。`days_in_range` は、フレームに実際に入った日数です。
 
 ```sql
 SELECT d, revenue,
        round(avg(revenue) OVER (ORDER BY d
              ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)) AS avg_rows,
        round(avg(revenue) OVER (ORDER BY d
-             RANGE BETWEEN INTERVAL 6 DAYS PRECEDING AND CURRENT ROW)) AS avg_range,
+             RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW)) AS avg_range,
        count(*) OVER (ORDER BY d
-             RANGE BETWEEN INTERVAL 6 DAYS PRECEDING AND CURRENT ROW) AS days_in_range
+             RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW) AS days_in_range
 FROM daily_sales
 ORDER BY d
 LIMIT 10;
@@ -232,9 +230,9 @@ LIMIT 10;
   10 rows                                           5 columns
 ```
 
-1 月 11 日の行を見てください。`ROWS BETWEEN 6 PRECEDING` は「直前の 6 行」なので、1 月 4 日から 11 日までの 6 行（8 日間にまたがります）の平均です。`RANGE BETWEEN INTERVAL 6 DAYS PRECEDING` は「6 日前の日付以降」なので、1 月 5 日から 11 日の 7 日間のうち、売上のある 5 日分の平均です。
+1 月 11 日の行を見てください。`ROWS BETWEEN 6 PRECEDING AND CURRENT ROW` は「現在の行と、その前の最大 6 行」です。1 月 11 日の前には 5 行（1 月 4 日、7 日、8 日、9 日、10 日）しかないので、現在の行と合わせて 6 行（8 日間にまたがります）の平均になります。`RANGE BETWEEN INTERVAL 6 DAYS PRECEDING` は「6 日前の日付以降」なので、1 月 5 日から 11 日の 7 日間のうち、売上のある 5 日分の平均です。
 
-ここで平均の分母は、どちらも「売上のある日の数」です。売上のない日を 0 円の日として平均したいなら、日付の表を作って左外部結合し、`coalesce` で 0 を入れてから窓を計算します。この日付の表を作るのに、後述の再帰 CTE を使います。**どちらが正しいかは、レポートの定義で決まります。** 「直近 7 日の平均」と「直近 7 営業日の平均」は別の数字です。定義を先に決めて、それに合う単位を選んでください。
+ここで平均の分母は、どちらも「売上のある日の数」です。売上のない日を 0 円の日として平均したいなら、日付の表を作って左外部結合し、`coalesce` で 0 を入れてからウィンドウ関数を計算します。この日付の表を作るのに、後述の再帰 CTE を使います。**どちらが正しいかは、レポートの定義で決まります。** 「直近 7 日の平均」と「直近 7 営業日の平均」は別の数字です。定義を先に決めて、それに合う単位を選んでください。
 
 `last_value` の罠も、フレームが原因です。既定のフレームは現在の行で終わるので、`last_value` は現在の行の値を返します。パーティションの最後の値が欲しいなら、フレームを明示します。
 
@@ -410,7 +408,7 @@ SELECT count(*) AS raw_rows, count(DISTINCT event_id) AS distinct_ids FROM event
 SELECT count(*) AS n
 FROM (
   SELECT *,
-         row_number() OVER (PARTITION BY event_id ORDER BY received_at) AS rn
+         row_number() OVER (PARTITION BY event_id ORDER BY received_at, event_id) AS rn
   FROM events
 ) AS t
 WHERE rn = 1;
@@ -425,7 +423,7 @@ WHERE rn = 1;
 └───────┘
 ```
 
-「顧客ごとの最新の注文」も、同じ形です。番号を降順で付けて、1 番を残します。DuckDB の `QUALIFY` を使うと、サブクエリで包まずに、ウィンドウ関数の結果で行を絞れます。`QUALIFY` は `WHERE` と `HAVING` の次に評価される句です。
+「顧客ごとの最新の注文」も、同じ形です。番号を降順で付けて、1 番を残します。DuckDB の `QUALIFY` を使うと、サブクエリで包まずに、ウィンドウ関数の結果で行を絞れます。`QUALIFY` は、ウィンドウ関数が計算された後、`ORDER BY` の前に評価される句です。
 
 ```sql
 SELECT customer_id, order_id, ordered_at
@@ -538,7 +536,7 @@ WITH e(customer_id, t) AS (
 ), flagged AS (
   SELECT customer_id, t,
          CASE WHEN t - lag(t) OVER (PARTITION BY customer_id ORDER BY t)
-                   > INTERVAL 30 MINUTES THEN 1 ELSE 0 END AS is_new
+                   > INTERVAL '30 minutes' THEN 1 ELSE 0 END AS is_new
   FROM e
 )
 SELECT customer_id, t,
@@ -571,7 +569,7 @@ WITH e AS (
 ), flagged AS (
   SELECT customer_id, t,
          CASE WHEN t - lag(t) OVER (PARTITION BY customer_id ORDER BY t)
-                   > INTERVAL 7 DAYS THEN 1 ELSE 0 END AS is_new
+                   > INTERVAL '7 days' THEN 1 ELSE 0 END AS is_new
   FROM e
 ), numbered AS (
   SELECT customer_id,
@@ -591,11 +589,11 @@ FROM (SELECT DISTINCT customer_id, session_no FROM numbered) AS s;
 └──────────┘
 ```
 
-閾値は分析の定義です。30 分なのか、サイトの種類によって変えるのかは、決めた理由と一緒に残します。遅れて届いたデータ（`received_at` が遅い行）がある場合、`event_time` と `received_at` のどちらで並べるかでもセッションは変わります。ここでは発生時刻の `event_time` を使っています。
+閾値は分析の定義です。30 分なのか、サイトの種類によって変えるのかは、決めた理由と一緒に残します。ここでは発生時刻の `event_time` で並べています。遅れて届いた行（`received_at` が遅い行）を含めるかどうかでも、結果は変わります。
 
 ## ピボット
 
-縦持ち（1 行が 1 件の事実）を横持ち（列が値の種類）に直すのがピボットです。月ごと・状態ごとの注文数を、状態を列にして並べます。どの製品でも使える形は、`CASE`（または `FILTER`）を使った集計です。
+縦持ち（1 行が 1 件の事実）を横持ち（列が値の種類）に直すのがピボットです。月ごと・状態ごとの注文数を、状態を列にして並べます。どの製品でも使える形は `sum(CASE WHEN 条件 THEN 1 ELSE 0 END)` です。次のクエリは `count(*) FILTER (WHERE 条件)` で書いています。`FILTER` は標準 SQL ですが、対応していない製品があるので、その場合は `CASE` に書き換えます。
 
 ```sql
 SELECT strftime(CAST(ordered_at AS TIMESTAMP), '%Y-%m') AS month,
@@ -650,7 +648,7 @@ ORDER BY month;
 └─────────┴───────────┴───────────┴────────┴─────────┘
 ```
 
-結果は同じです（列の順番だけ、アルファベット順になります）。ただし、どちらの方法でも、列が固定であることに注意してください。ステータスが増えたとき、`CASE` 版は列が足されず、新しい状態の注文が集計から静かに落ちます。`PIVOT` 版は列が増えますが、下流のテーブルのスキーマが予告なく変わります。パイプラインに入れるなら、`CASE` 版で列を明示し、想定外の値が来たら検知する（第 13 章のテスト）ほうが安全です。見せるための表なら、BI ツールのピボットに任せるのが普通です。
+結果は同じです（列の順番だけ、アルファベット順になります）。ただし、どちらの方法でも列は固定です。ステータスが増えたとき、`CASE` 版は新しい状態の注文が集計から静かに落ち、`PIVOT` 版は下流の表のスキーマが予告なく変わります。パイプラインに入れるなら、`CASE` 版で列を明示し、想定外の値が来たら検知する（第 13 章）ほうが安全です。見せるための表なら、BI ツールのピボットに任せるのが普通です。
 
 ## 実行計画を読む
 
@@ -732,7 +730,7 @@ GROUP BY c.prefecture;
 
 ```text
 ╭─ Summary ───────────╮
-│ Total Time: 0.0021s │
+│ Total Time: 0.0017s │
 ╰─────────────────────╯
 ╭─ Projection ─────────────────────────────╮
 │ Projections:                             │
@@ -778,7 +776,7 @@ GROUP BY c.prefecture;
                                               ╰─────────────────────────────────────────────────────────────────╯
 ```
 
-`orders` の読み込みは、見積もり `~600` 行に対して実際は 2,340 行で、結合後も見積もり `~840` 行に対し実際は 5,812 行でした。見積もりと実際が桁で違うときが、遅いクエリを調べる手がかりです。見積もりの元になる統計がずれていると、データベースは間違った結合の順や方法を選びます。このデータは小さいので、ずれても実害はありません。大きなデータでは、実際の行数が見積もりの 10 倍や 100 倍になると、結合の方法や順序が不適切になって、時間が桁で変わります。
+`orders` の読み込みは、見積もり `~600` 行に対して実際は 2,340 行で、結合後も見積もり `~840` 行に対し実際は 5,812 行でした。ここでは約 4 倍と約 7 倍のずれです。ずれが大きいノードが、遅いクエリを調べる手がかりです。見積もりの元になる統計がずれていると、データベースは間違った結合の順や方法を選びます。このデータは小さいので、ずれても実害はありません。大きなデータでは、実際の行数が見積もりの 10 倍や 100 倍になると、結合の方法や順序が不適切になって、時間が大きく変わります。
 
 読むときの手順を決めておくと、迷いません。
 
@@ -787,11 +785,18 @@ GROUP BY c.prefecture;
 3. 読み込みなら、条件が読み込みの段階で適用されているか、必要な列だけを読んでいるかを見る。
 4. 結合なら、行数が爆発していないか（第 5 章のファンアウト）を見る。
 
-PostgreSQL の `EXPLAIN` は、`cost=0.00..43752.00 rows=1 width=41` のような形です。`cost` は計算量の見積もりで、単位は時間ではなく内部の目安です。`rows` は見積もり行数、`width` は 1 行の平均バイト数です。DuckDB と同じく、`ANALYZE` を付けると実測が加わります。
+PostgreSQL の `EXPLAIN` は、`cost=0.00..43752.00 rows=1 width=41` のような形です。`cost` は計算量の目安（時間ではありません）、`rows` は見積もり行数です。`ANALYZE` を付けると実測が加わるのは DuckDB と同じです。
 
-## 索引は、行指向と列指向で効き方が違う
+## インデックスは、行指向と列指向で効き方が違う
 
-索引は、ある列の値から行を素早く探すための補助的なデータ構造です。本の索引と同じ考え方で、探す手間を減らす代わりに、作る手間と置く場所が要ります。
+インデックス（英語の index）は、ある列の値から行を素早く探すための補助的なデータ構造です。本の巻末にある用語の一覧と同じ考え方で、探す手間を減らす代わりに、作る手間と置く場所が要ります。
+
+手元で試すには、`examples/b06/run_index.py` を使います。DuckDB の実験はメモリ上で動きます。PostgreSQL の実験は、README の手順で `docker compose up -d --wait` を済ませたうえで、接続先を環境変数 `PG_DSN` で渡します（接続先は README のとおり `postgresql://deb:deb@localhost:5432/deb`）。
+
+```bash
+python examples/b06/run_index.py duckdb
+PG_DSN=postgresql://deb:deb@localhost:5432/deb python examples/b06/run_index.py postgres
+```
 
 まず PostgreSQL（バージョン 16）で、200 万行の一時テーブルを作り、`id` で 1 行を探します。一時テーブルは並列実行の対象外で、計画が読みやすいためです。
 
@@ -801,19 +806,11 @@ SELECT g AS id, g % 1000 AS grp, md5(g::text) AS h
 FROM generate_series(1, 2000000) AS g;
 ```
 
-```text
-
-```
-
 ```sql
 ANALYZE big;
 ```
 
-```text
-
-```
-
-索引なしの計画です。
+インデックスなしの計画です。
 
 ```sql
 EXPLAIN SELECT * FROM big WHERE id = 123456;
@@ -824,14 +821,10 @@ Seq Scan on big  (cost=0.00..43752.00 rows=1 width=41)
   Filter: (id = 123456)
 ```
 
-全件を順に読む `Seq Scan` です。`id` の索引を作ってから、同じクエリの計画を見ます。
+全件を順に読む `Seq Scan` です。`id` のインデックスを作ってから、同じクエリの計画を見ます。
 
 ```sql
 CREATE INDEX big_id ON big (id);
-```
-
-```text
-
 ```
 
 ```sql
@@ -843,14 +836,10 @@ Index Scan using big_id on big  (cost=0.43..8.45 rows=1 width=41)
   Index Cond: (id = 123456)
 ```
 
-`Index Scan` に変わり、見積もりコストが 43752 から 8.45 に下がりました（値は実行のたびに多少変わります）。ただし、索引は万能ではありません。`grp` の値は 0 から 999 まで均等に散らばっています。`grp < 900` は全体の約 9 割の行に当たります。索引を作っても、計画は `Seq Scan` のままです。
+`Index Scan` に変わり、見積もりコストが 43752 から 8.45 に下がりました（値は実行のたびに多少変わります）。ただし、インデックスは万能ではありません。`grp` の値は 0 から 999 まで均等に散らばっています。`grp < 900` は全体の約 9 割の行に当たります。インデックスを作っても、計画は `Seq Scan` のままです。
 
 ```sql
 CREATE INDEX big_grp ON big (grp);
-```
-
-```text
-
 ```
 
 ```sql
@@ -858,24 +847,33 @@ EXPLAIN SELECT * FROM big WHERE grp < 900;
 ```
 
 ```text
-Seq Scan on big  (cost=0.00..43752.00 rows=1795875 width=41)
+Seq Scan on big  (cost=0.00..43752.00 rows=1792439 width=41)
   Filter: (grp < 900)
 ```
 
-条件に合う行が全体の約 0.1%（`grp = 7`）なら、索引が使われます。
+条件に合う行が全体の約 0.1%（`grp = 7`）なら、インデックスが使われます。
 
 ```sql
 EXPLAIN SELECT * FROM big WHERE grp = 7;
 ```
 
 ```text
-Bitmap Heap Scan on big  (cost=23.88..5819.02 rows=1994 width=41)
+Bitmap Heap Scan on big  (cost=23.87..5813.83 rows=1992 width=41)
   Recheck Cond: (grp = 7)
-  ->  Bitmap Index Scan on big_grp  (cost=0.00..23.38 rows=1994 width=0)
+  ->  Bitmap Index Scan on big_grp  (cost=0.00..23.37 rows=1992 width=0)
         Index Cond: (grp = 7)
 ```
 
-行の多くを読むなら、索引で 1 行ずつ探すよりも、全部を順に読むほうが速いからです。ここでは、`Bitmap Index Scan` で該当する場所を先に調べてから、まとめて読む方式が選ばれています。PostgreSQL の文書も、索引を作ると更新のたびにそのメンテナンスが要り、書き込みの負担が増えるので、使われない索引は消すよう勧めています。
+行の多くを読むなら、インデックスで 1 行ずつ探すよりも、全部を順に読むほうが速いからです。ここでは、`Bitmap Index Scan` で該当する場所を先に調べてから、まとめて読む方式が選ばれています。PostgreSQL の文書も、インデックスは表の更新のたびに同期が必要で、書き込みの負担が増えるので、ほとんど（またはまったく）使われないインデックスは削除するよう勧めています。
+
+PostgreSQL のインデックスを使うときの注意を、実務で迷う順にまとめます。
+
+- 結合の条件に使う列（外部キーの列を含む）にインデックスが要るかを確かめます。外部キーの参照先の列には必ずインデックスがありますが、参照する側の列には自動では作られません（PostgreSQL の文書は、参照する側の行を探す `DELETE` や `UPDATE` が遅くなるため、インデックスを付けることをよく勧めています）。
+- 複数の列をまとめたインデックスは、左の列から順に効きます。`(customer_id, ordered_at)` は `customer_id` だけの条件にも使えますが、`ordered_at` だけの条件には効きにくくなります。条件に必ず入る列、等しいかを比べる列を左に置きます。
+- 列を関数で包むと、その列のインデックスは使われません。`WHERE lower(email) = '...'` には、`lower(email)` に対する式のインデックスが要ります。
+- 今回は一時テーブルなので、`ANALYZE` を手で流しました。autovacuum（自動の掃除・統計更新）は一時テーブルに届かないため、手で統計を更新しないと、計画が悪くなります。普通のテーブルでは自動で更新されます。
+
+どれも PostgreSQL の文書にある内容です（参考文献）。
 
 次に、DuckDB で同じ実験をします。DuckDB は列指向で、列ごとに値を並べて保存し、行のまとまり（行グループ）ごとに最小値と最大値（ゾーンマップ）を自動で持ちます。ここでも 200 万行を、`id` がばらばらの順に並ぶように作ります。
 
@@ -895,7 +893,7 @@ ORDER BY h;
 └─────────┘
 ```
 
-索引なしで `id` を探します。
+インデックスなしで `id` を探します。
 
 ```sql
 EXPLAIN ANALYZE SELECT * FROM big WHERE id = 123456;
@@ -915,18 +913,10 @@ EXPLAIN ANALYZE SELECT * FROM big WHERE id = 123456;
 ╰─────────────────────────────╯
 ```
 
-`Row Groups Scanned: 17 / 17` は、17 個ある行グループをすべて読んだことを示します。`id` がばらばらに並んでいると、どの行グループにも最小値と最大値の範囲に目的の値が入るため、読み飛ばせません。ART 索引を作ります。
+`Row Groups Scanned: 17 / 17` は、17 個ある行グループをすべて読んだことを示します。`id` がばらばらに並んでいると、どの行グループにも最小値と最大値の範囲に目的の値が入るため、読み飛ばせません。ART（Adaptive Radix Tree）インデックスを作ります。
 
 ```sql
 CREATE INDEX big_id ON big (id);
-```
-
-```text
-┌────────┐
-│ Count  │
-│ int64  │
-└────────┘
-  0 rows
 ```
 
 ```sql
@@ -964,7 +954,7 @@ EXPLAIN SELECT * FROM big WHERE id = 123456;
 ╰────────────────────────╯
 ```
 
-索引を使うかどうかは実行時に決まるため、計画の表示と実行時の挙動が違う場合があります。**索引が使われたかを確かめるときは、`EXPLAIN ANALYZE` で見ます。** 次に、`id` の順に並べて保存した表は、索引なしでも読み飛ばせます。
+DuckDB 2.0.0 で試すと、`EXPLAIN` だけでは、インデックスを作った後でも `Sequential Scan` と表示されます。一方 `EXPLAIN ANALYZE` では `Index Scan` になっていました。計画の表示と実行時の挙動が食い違うことがあるので、**インデックスが使われたかを確かめるときは、`EXPLAIN ANALYZE` で見ます。** 次に、`id` の順に並べて保存した表を試します。
 
 ```sql
 CREATE TABLE big_sorted AS SELECT * FROM big ORDER BY id;
@@ -985,7 +975,7 @@ EXPLAIN ANALYZE SELECT * FROM big_sorted WHERE id = 123456;
 
 ```text
 ╭─ Summary ───────────╮
-│ Total Time: 0.0007s │
+│ Total Time: 0.0005s │
 ╰─────────────────────╯
 ╭─ Table Scan ──────────────────╮
 │ Table: memory.main.big_sorted │
@@ -997,7 +987,7 @@ EXPLAIN ANALYZE SELECT * FROM big_sorted WHERE id = 123456;
 ╰───────────────────────────────╯
 ```
 
-`Row Groups Scanned: 1 / 17` です。DuckDB の文書も、データが並んでいるほどゾーンマップが効くと説明しています。時系列のデータを時刻の順に入れる分析 DB では、ほとんどの場合、この仕組みで足ります。DuckDB の文書は、ART 索引について、主キーなどの制約の確認と、ごく少数の行（0.1% 未満）を探す場合に使うもので、結合・集計・並べ替えの性能には影響しないと書いています。
+`Row Groups Scanned: 1 / 17` です。DuckDB の文書も、データが並んでいるほどゾーンマップが効くと説明しています。時刻の順に入れる時系列のデータのように、並んだ列では、この仕組みで足りることが多くなります。DuckDB の文書は、ART インデックスについて、主キーなどの制約の確認と、ごく少数の行を探す場合に使うもので、結合・集計・並べ替えの性能には影響しないと書いています。インデックスが使われる目安の行数は、既定では「2,048 行と、表の行数の 0.1% の大きいほう」で、`index_scan_percentage` と `index_scan_max_count` の設定で変えられます。
 
 もう 1 つの列指向の特徴は、読む列の数です。
 
@@ -1033,27 +1023,25 @@ EXPLAIN SELECT avg(id) FROM big WHERE grp = 7;
 
 {{ table("b06-index-compare") }}
 
-指針をまとめます。業務システムのように、主キーで 1 件を取る・更新する処理が中心なら、索引が要ります（第 7 章）。分析のように、多数の行を読んで集計するなら、索引より「必要な列だけを読む」「並べて置いて読み飛ばす」「パーティションに分ける」（第 11 章）が効きます。
+指針をまとめます。業務システムのように、主キーで 1 件を取る・更新する処理が中心なら、インデックスが要ります（第 7 章）。分析のように、多数の行を読んで集計するなら、インデックスより「必要な列だけを読む」「並べて置いて読み飛ばす」「パーティションに分ける」（第 11 章）が効きます。
 
 ## 読みやすい SQL を書く
 
 - CTE の名前は、中身を表す名前にする（`paid` `totals`）。`t1` `t2` は避ける。
 - 1 つの CTE は 1 つの目的に絞る。絞る、結合する、集計する、を別の段にする。
 - ウィンドウ関数の `ORDER BY` は、同じ値が残らないようにキーを足す。
-- 同じウィンドウを何度も書くなら `WINDOW w AS (...)` で名前を付ける。
 - 閾値や定義（30 分、キャンセルを除く）は、クエリの先頭の CTE かコメントに書く。数字が埋もれる。
-- 「何をするか」でなく「なぜそうするか」をコメントに書く。
 
 ## よくある失敗
 
 - `row_number` の `ORDER BY` が一意でなく、実行のたびに残る行が変わる。
 - `last_value` が現在の行を返す。フレームを明示する。
-- 日付の欠けを考えずに `ROWS` で移動平均を取り、7 日より長い窓になる。`RANGE` か、カレンダーを結合する。
+- 日付の欠けを考えずに `ROWS` で移動平均を取り、7 日より長いフレームになる。`RANGE` か、カレンダーを結合する。
 - 再帰 CTE に終了条件を書かず、終わらない。
 - 重複排除で、どの行を残すかを決めずに `DISTINCT` を使う。
 - `EXPLAIN` の `~` の数字を実測と取り違える。`EXPLAIN ANALYZE` で確かめる。
-- 索引を、とりあえず全部の列に作る。書き込みが遅くなる。
-- 列指向の DB に、行指向の癖で「索引を足せば速くなる」と考える。まず読む列と順序を見る。
+- インデックスを、とりあえず全部の列に作る。書き込みが遅くなる。
+- 列指向の DB に、行指向の癖で「インデックスを足せば速くなる」と考える。まず読む列と順序を見る。
 
 ## まとめ
 
@@ -1063,7 +1051,7 @@ EXPLAIN SELECT avg(id) FROM big WHERE grp = 7;
 - CTE は読みやすさの道具で、再帰 CTE は連番と階層に使います。
 - 「各グループの最新 1 行」と重複排除は、`row_number`・`QUALIFY`・`DISTINCT ON`・`arg_max` から選びます。
 - `EXPLAIN ANALYZE` は下から読み、見積もりと実際の行数の差と、読み込みの条件と列を見ます。
-- 索引は、行指向の DB では点検索の道具、列指向の DB では例外的な道具です。分析 DB では並べ方と読む列を先に考えます。
+- インデックスは、行指向の DB では点検索の道具、列指向の DB では例外的な道具です。分析 DB では並べ方と読む列を先に考えます。
 
 ## 練習問題
 
@@ -1096,7 +1084,7 @@ EXPLAIN SELECT avg(id) FROM big WHERE grp = 7;
     SELECT count(days) AS gaps, round(avg(days), 1) AS avg_days FROM gaps;
     ```
 
-    間隔は 2,496 件で、平均は 12.0 日です。件数は、注文 3,000 件から、顧客ごとの最初の注文（前の注文がなく `lag` が `NULL`）の 504 件を引いた数と一致します。`avg` は `NULL` を無視するので、最初の注文は平均に入りません。
+    間隔は 2,496 件で、平均は 12.0 日です（暦の日の差の平均です）。件数は、注文 3,000 件から、顧客ごとの最初の注文（前の注文がなく `lag` が `NULL`）の 504 件を引いた数と一致します。`avg` は `NULL` を無視するので、最初の注文は平均に入りません。
 
 問 3. 注文が 2 回以上ある顧客の数を、ウィンドウ関数で求めてください。
 
@@ -1119,7 +1107,7 @@ EXPLAIN SELECT avg(id) FROM big WHERE grp = 7;
     WITH dedup AS (
       SELECT *
       FROM events
-      QUALIFY row_number() OVER (PARTITION BY event_id ORDER BY received_at) = 1
+      QUALIFY row_number() OVER (PARTITION BY event_id ORDER BY received_at, event_id) = 1
     )
     SELECT event_type, count(*) AS n FROM dedup GROUP BY event_type ORDER BY n DESC;
     ```
@@ -1135,13 +1123,17 @@ EXPLAIN SELECT avg(id) FROM big WHERE grp = 7;
 - DuckDB Documentation, “EXPLAIN: Inspect Query Plans”, <https://duckdb.org/docs/2.0/guides/meta/explain.html>
 - DuckDB Documentation, “EXPLAIN ANALYZE: Profile Queries”, <https://duckdb.org/docs/2.0/guides/meta/explain_analyze.html>
 - DuckDB Documentation, “Indexes”, <https://duckdb.org/docs/2.0/sql/indexes.html>
-- DuckDB Documentation, “Indexing”（ゾーンマップと ART 索引）, <https://duckdb.org/docs/2.0/guides/performance/indexing.html>
+- DuckDB Documentation, “Indexing”（ゾーンマップと ART インデックス）, <https://duckdb.org/docs/2.0/guides/performance/indexing.html>
 - PostgreSQL Documentation, “Window Function Tutorial”, <https://www.postgresql.org/docs/current/tutorial-window.html>
 - PostgreSQL Documentation, “WITH Queries (Common Table Expressions)”, <https://www.postgresql.org/docs/current/queries-with.html>
 - PostgreSQL Documentation, “SELECT”（`DISTINCT ON`）, <https://www.postgresql.org/docs/current/sql-select.html>
 - PostgreSQL Documentation, “Using EXPLAIN”, <https://www.postgresql.org/docs/current/using-explain.html>
 - PostgreSQL Documentation, “EXPLAIN”, <https://www.postgresql.org/docs/current/sql-explain.html>
 - PostgreSQL Documentation, “Indexes: Introduction”, <https://www.postgresql.org/docs/current/indexes-intro.html>
+- PostgreSQL Documentation, “Multicolumn Indexes”, <https://www.postgresql.org/docs/current/indexes-multicolumn.html>
+- PostgreSQL Documentation, “Indexes on Expressions”, <https://www.postgresql.org/docs/current/indexes-expressional.html>
+- PostgreSQL Documentation, “Constraints”（外部キーとインデックス）, <https://www.postgresql.org/docs/current/ddl-constraints.html>
+- PostgreSQL Documentation, “Routine Vacuuming”（一時テーブルと autovacuum）, <https://www.postgresql.org/docs/current/routine-vacuuming.html>
 
 !!! tip "さらに深く"
-    実行計画の読み方を分散処理に広げた内容は、応用編 第1章「分散処理の内側」で扱います。
+    実行計画の読み方を分散処理に広げた内容は、応用編 第2章「Spark の性能調整」で扱います。重複排除と「各グループの最新 1 行」を CDC（変更データの取り込み）で扱う設計は、応用編 第5章「CDC とイベント駆動」で、列指向のデータとインデックスの関係をテーブルフォーマットで見る話は、応用編 第3章「レイクハウスとテーブルフォーマット」で扱います。

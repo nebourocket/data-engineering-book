@@ -99,6 +99,8 @@ def test_three_latest_forms_agree(results):
     assert a == results["latest_arg_max"]
 
 
+# 注意: EXPLAIN の見積もり行数（~600 など）と Row Groups の数（17）は DuckDB 2.0.0 に固定した値です。
+# DuckDB を上げて失敗したら、本文の出力例もあわせて見直してください。
 def test_explain_shows_filter_and_estimate_gap(results):
     con = results["_con"]
     plan = first_cell(con, Q["explain_plan"])
@@ -160,3 +162,25 @@ def test_exercises(results):
     assert sum(by_type.values()) == 4000
     # 注文のある顧客 504 人 - 注文 1 回だけの 6 人 = 498 人
     assert con.execute("SELECT count(*) FROM (SELECT customer_id FROM orders GROUP BY 1 HAVING count(*) >= 2)").fetchone() == (498,)
+
+
+run_index = _load("run_index_b06", HERE / "run_index.py")
+
+
+def test_run_index_duckdb():
+    out = run_index.run_duckdb(HERE / "duckdb_index.sql")
+    assert "Index Scan" in out["scan_after"] and "Index Scan" not in out["scan_before"]
+
+
+def test_run_index_postgres(pg_dsn):
+    out = run_index.run_postgres(HERE / "pg_index.sql", pg_dsn)
+    assert out["plan_before"].startswith("Seq Scan") and out["plan_after"].startswith("Index Scan")
+
+
+def test_usage_runs_named_queries(tmp_path, monkeypatch, capsys):
+    """usage.sh と同じ引数で、ビューを作ってから使うクエリを流せること。"""
+    monkeypatch.chdir(tmp_path)
+    spec = importlib.util.spec_from_file_location("__main__", HERE.parent / "b05" / "run_sql.py")
+    monkeypatch.setattr("sys.argv", ["run_sql.py", str(HERE / "queries.sql"), "daily_sales_view", "moving_avg_frames"])
+    spec.loader.exec_module(importlib.util.module_from_spec(spec))
+    assert "avg_range" in capsys.readouterr().out

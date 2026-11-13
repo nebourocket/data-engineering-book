@@ -1,5 +1,5 @@
 -- name: daily_sales_view
-CREATE OR REPLACE TEMP VIEW daily_sales AS
+CREATE OR REPLACE VIEW daily_sales AS
 SELECT CAST(o.ordered_at AS DATE) AS d,
        sum(i.quantity * i.unit_price) AS revenue
 FROM orders AS o
@@ -56,9 +56,9 @@ SELECT d, revenue,
        round(avg(revenue) OVER (ORDER BY d
              ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)) AS avg_rows,
        round(avg(revenue) OVER (ORDER BY d
-             RANGE BETWEEN INTERVAL 6 DAYS PRECEDING AND CURRENT ROW)) AS avg_range,
+             RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW)) AS avg_range,
        count(*) OVER (ORDER BY d
-             RANGE BETWEEN INTERVAL 6 DAYS PRECEDING AND CURRENT ROW) AS days_in_range
+             RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW) AS days_in_range
 FROM daily_sales
 ORDER BY d
 LIMIT 10;
@@ -122,7 +122,7 @@ SELECT count(*) AS raw_rows, count(DISTINCT event_id) AS distinct_ids FROM event
 SELECT count(*) AS n
 FROM (
   SELECT *,
-         row_number() OVER (PARTITION BY event_id ORDER BY received_at) AS rn
+         row_number() OVER (PARTITION BY event_id ORDER BY received_at, event_id) AS rn
   FROM events
 ) AS t
 WHERE rn = 1;
@@ -168,7 +168,7 @@ WITH e(customer_id, t) AS (
 ), flagged AS (
   SELECT customer_id, t,
          CASE WHEN t - lag(t) OVER (PARTITION BY customer_id ORDER BY t)
-                   > INTERVAL 30 MINUTES THEN 1 ELSE 0 END AS is_new
+                   > INTERVAL '30 minutes' THEN 1 ELSE 0 END AS is_new
   FROM e
 )
 SELECT customer_id, t,
@@ -182,7 +182,7 @@ WITH e AS (
 ), flagged AS (
   SELECT customer_id, t,
          CASE WHEN t - lag(t) OVER (PARTITION BY customer_id ORDER BY t)
-                   > INTERVAL 7 DAYS THEN 1 ELSE 0 END AS is_new
+                   > INTERVAL '7 days' THEN 1 ELSE 0 END AS is_new
   FROM e
 ), numbered AS (
   SELECT customer_id,

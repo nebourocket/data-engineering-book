@@ -12,13 +12,21 @@ FROM customers
 WHERE email IS NULL
 GROUP BY email;
 
--- name: ex4_half_open
+-- name: ex4_march_half_open
 SELECT count(*) FROM orders
-WHERE ordered_at >= '2026-06-01' AND ordered_at < '2026-07-01';
+WHERE ordered_at >= '2026-03-01' AND ordered_at < '2026-04-01';
 
--- name: ex4_between
+-- name: ex4_march_between
+SELECT count(*) FROM orders
+WHERE ordered_at BETWEEN '2026-03-01' AND '2026-03-31';
+
+-- name: ex4_june_between
 SELECT count(*) FROM orders
 WHERE ordered_at BETWEEN '2026-06-01' AND '2026-06-30';
+
+-- name: ex4_june_half_open
+SELECT count(*) FROM orders
+WHERE ordered_at >= '2026-06-01' AND ordered_at < '2026-07-01';
 
 -- name: ex4_last_order
 SELECT max(ordered_at) AS last_order FROM orders;

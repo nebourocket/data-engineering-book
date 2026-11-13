@@ -29,6 +29,6 @@ FROM (
 WITH dedup AS (
   SELECT *
   FROM events
-  QUALIFY row_number() OVER (PARTITION BY event_id ORDER BY received_at) = 1
+  QUALIFY row_number() OVER (PARTITION BY event_id ORDER BY received_at, event_id) = 1
 )
 SELECT event_type, count(*) AS n FROM dedup GROUP BY event_type ORDER BY n DESC;

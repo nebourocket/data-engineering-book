@@ -17,7 +17,7 @@ SQL は、表の形をしたデータに「何が欲しいか」を伝える言�
 
 SQL には国際標準（ISO/IEC 9075）があり、PostgreSQL や DuckDB など多くの製品が標準の一部を実装し、独自の拡張を足しています。PostgreSQL の文書には、どの機能が標準のどの項目に当たるかの一覧があります（参考文献）。標準の部分は、どの製品でもほぼ同じ書き方で通ります。この章でも、DuckDB だけの書き方が出てきたときは、そう断ります。
 
-本書では DuckDB（バージョン 2.0.0）を使います。サーバーを立てずに、ファイル 1 つのデータベースとして動く分析向けの DBMS で、Python から呼べるため、Docker の開発用イメージだけで試せます。使うデータは、本書で共通に使う架空の通販「ねぼすけ商店」です。顧客・商品・注文・注文明細・行動ログの 5 つの表が、`examples/common/neboske_shop.py` から作られます。このデータには、欠損・重複・表記ゆれが意図して入っています。本物のデータも同じ姿をしているので、それに出会う練習も兼ねます。
+本書では DuckDB（バージョン 2.0.0）を使います。サーバーを立てずに、ファイル 1 つのデータベースとして動く分析向けの DBMS（データベース管理システム。データを保存し、SQL を受けて処理するソフトウェア）で、Python から呼べるため、Docker の開発用イメージだけで試せます。使うデータは、本書で共通に使う架空の通販「ねぼすけ商店」です。顧客・商品・注文・注文明細・行動ログの 5 つの表が、`examples/common/neboske_shop.py` から作られます。このデータには、欠損・重複・表記ゆれが意図して入っています。本物のデータも同じ姿をしているので、それに出会う練習も兼ねます。
 
 SQL をファイルに書いて流す小さなスクリプトを用意しました。クエリは `-- name: 名前` の行で区切り、名前を渡すとそのクエリだけを実行します。`shop.duckdb` が無ければ、ねぼすけ商店のデータで作ります。
 
@@ -143,7 +143,7 @@ SELECT name FROM products WHERE name LIKE '%コーヒー%';
 
 ## NULL と三値論理
 
-`NULL` は「値が無い」「分からない」を表す印です。0 でも空文字でもありません。顧客の約 5% は、メールアドレスが `NULL` でした。
+`NULL` は「値が無い」「分からない」を表す印です。0 でも空文字でもありません。505 人の顧客のうち 20 人は、メールアドレスが `NULL` でした。
 
 ここで SQL の最大の落とし穴が出ます。`NULL` と何かを比べた結果は、真（TRUE）でも偽（FALSE）でもなく、「分からない」（NULL）になります。真・偽・不明の 3 つの値を持つので、三値論理と呼びます。`WHERE` は、条件が TRUE の行だけを残します。FALSE の行も、NULL の行も落ちます。
 
@@ -250,7 +250,7 @@ FROM customers;
 
 505 行のうちメールがある行は 485 行、そのうち重複を除くと 480 種類です。差の 5 は、このデータに意図して入れた二重登録（同じメールで `customer_id` だけ違う）の数です。`sum` や `avg` は `NULL` の行を無視します。「平均値の分母に `NULL` の行は入らない」ことは、レポートを読む人にも伝わっていないことが多いので、数字を出すときは注記してください。
 
-最後に、`NOT IN` の罠です。`x NOT IN (サブクエリ)` は、サブクエリの結果に `NULL` が 1 つでも混ざると、全行が「分からない」になり、0 件を返します。表の「1 NOT IN (2, NULL)」の行がそれです。
+最後に、`NOT IN` の罠です。`x NOT IN (サブクエリ)` は、サブクエリの結果に `NULL` が 1 つでも混ざると、0 件を返します。`x` と一致しない値との比較は NULL（分からない）に、一致する値との比較は FALSE になり、どの行も TRUE にならないためです。表の「1 NOT IN (2, NULL)」の行がそれです。
 
 ```sql
 SELECT count(*) AS n
@@ -287,6 +287,93 @@ WHERE NOT EXISTS (
 ```
 
 「あるものの中に無い行」を探すときは、`NOT IN` ではなく `NOT EXISTS`（または後で出てくる `LEFT JOIN ... IS NULL`）を使う、と決めておくと事故が減ります。
+
+`NULL` を扱う道具も覚えておきます。`coalesce(a, b, ...)` は、左から順に見て最初の `NULL` でない値を返します。メールが無いときの表示用の値を入れる、といった場面で使います。
+
+```sql
+SELECT customer_id, coalesce(email, '(未登録)') AS email
+FROM customers
+WHERE email IS NULL
+ORDER BY customer_id
+LIMIT 3;
+```
+
+```text
+┌─────────────┬──────────┐
+│ customer_id │  email   │
+│    int64    │ varchar  │
+├─────────────┼──────────┤
+│           2 │ (未登録) │
+│          26 │ (未登録) │
+│          36 │ (未登録) │
+└─────────────┴──────────┘
+```
+
+`nullif(a, b)` は、a と b が等しければ `NULL`、違えば a を返します。0 で割るエラーを避けるのに使います。分母が 0 になりうるときは、`nullif(分母, 0)` と書くと、結果が `NULL` になって計算が止まりません。顧客ごとの「キャンセル数 ÷ 出荷数」です。出荷が 0 件の顧客は、エラーではなく `NULL` になります（下の 10 人は全員が出荷 1 件以上なので、すべて値が出ています）。
+
+```sql
+SELECT customer_id,
+       count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+       count(*) FILTER (WHERE lower(status) = 'shipped') AS shipped,
+       count(*) FILTER (WHERE status = 'cancelled')
+         / nullif(count(*) FILTER (WHERE lower(status) = 'shipped'), 0) AS cancel_per_shipped
+FROM orders
+WHERE customer_id <= 10
+GROUP BY customer_id
+ORDER BY customer_id;
+```
+
+```text
+┌─────────────┬───────────┬─────────┬────────────────────┐
+│ customer_id │ cancelled │ shipped │ cancel_per_shipped │
+│    int64    │   int64   │  int64  │       double       │
+├─────────────┼───────────┼─────────┼────────────────────┤
+│           1 │         1 │       2 │                0.5 │
+│           2 │         2 │       2 │                1.0 │
+│           3 │         0 │       2 │                0.0 │
+│           4 │         0 │       3 │                0.0 │
+│           5 │         1 │       3 │ 0.3333333333333333 │
+│           6 │         1 │       2 │                0.5 │
+│           7 │         2 │       1 │                2.0 │
+│           8 │         0 │       1 │                0.0 │
+│           9 │         4 │       3 │ 1.3333333333333333 │
+│          10 │         0 │       2 │                0.0 │
+└─────────────┴───────────┴─────────┴────────────────────┘
+  10 rows                                      4 columns
+```
+
+文字列を整える関数もよく使います。`trim` は前後の空白を除き、`replace` は文字列を置き換えます。型の変換には `CAST` のほかに `TRY_CAST` があります。`CAST` は 1 件でも変換できない値があると、クエリ全体がエラーで止まります。`TRY_CAST` は、変換できない値を `NULL` にして先へ進みます。
+
+```sql
+SELECT trim('  090-1234-5678 ') AS trimmed,
+       replace('090-1234-5678', '-', '') AS digits,
+       TRY_CAST('12' AS INTEGER) AS good,
+       TRY_CAST('12a' AS INTEGER) AS bad;
+```
+
+```text
+┌───────────────┬─────────────┬───────┬───────┐
+│    trimmed    │   digits    │ good  │  bad  │
+│    varchar    │   varchar   │ int32 │ int32 │
+├───────────────┼─────────────┼───────┼───────┤
+│ 090-1234-5678 │ 09012345678 │    12 │  NULL │
+└───────────────┴─────────────┴───────┴───────┘
+```
+
+`CAST` の場合は、次のように止まります。
+
+```sql
+SELECT CAST('12a' AS INTEGER) AS n;
+```
+
+```text
+Conversion Error: Could not convert string '12a' to INT32
+
+LINE 3: SELECT CAST('12a' AS INTEGER) AS n
+               ^^^^^^^^^^^^^^^^^^^^^^
+```
+
+大量のデータに汚れた値が混ざっている場合は `TRY_CAST` で `NULL` にし、`NULL` になった行の数を数えて品質の指標にする、という使い方が定番です（第 13 章）。黙って捨てるのではなく、何件あったかを必ず記録します。
 
 並べ替えでも `NULL` は問題になります。DuckDB は、昇順なら `NULL` を最後に置きます（`NULLS LAST`）。PostgreSQL は昇順で最後、降順では最初です。DuckDB は降順でも最後に置くため、製品を移すと並びが変わります（どちらも `NULLS FIRST` / `NULLS LAST` で明示できます）。
 
@@ -375,7 +462,7 @@ ORDER BY n DESC;
 └────────────┴───────┘
 ```
 
-「ある都道府県だけを集計したい」なら `WHERE` です。`WHERE` のほうが、集計に回る行が減るので速くなります。「集計した値で絞る」ときだけ `HAVING` を使います。
+「ある都道府県だけを集計したい」なら `WHERE` です。`WHERE` で先に絞れば集計に回る行が減ります（`HAVING` に書いても、結果が同じなら最適化で先に絞られることがありますが、意図が伝わるのは `WHERE` です）。「集計した値で絞る」ときだけ `HAVING` を使います。
 
 結合と集計を組み合わせれば、売上の分析ができます。カテゴリごとの明細の行数と売上（数量 × 単価の合計）です。
 
@@ -718,7 +805,7 @@ ORDER BY month;
 ```sql
 SELECT count(*) AS late_events
 FROM events
-WHERE CAST(received_at AS TIMESTAMP) - CAST(event_time AS TIMESTAMP) > INTERVAL 1 DAY;
+WHERE CAST(received_at AS TIMESTAMP) - CAST(event_time AS TIMESTAMP) > INTERVAL '1 day';
 ```
 
 ```text
@@ -839,6 +926,142 @@ FROM (
 
 `UNION` は 505 行、`UNION ALL` は 7,040 行（注文 3,000 + ログ 4,040）です。重複を取り除くには全行を比べる必要があるので、`UNION` のほうが重くなります。重複が起きない（または起きてもよい）と分かっているときは、`UNION ALL` を使います。「とりあえず `UNION`」と書くと、重複が静かに消えて数字が合わなくなる、遅くなる、のどちらかが起きます。
 
+`SELECT DISTINCT` は、結果から重複した行を取り除きます。都道府県の一覧を取るときなどに使います。
+
+```sql
+SELECT DISTINCT prefecture FROM customers ORDER BY prefecture;
+```
+
+```text
+┌────────────┐
+│ prefecture │
+│  varchar   │
+├────────────┤
+│ 京都       │
+│ 北海道     │
+│ 大阪       │
+│ 宮城       │
+│ 愛知       │
+│ 東京       │
+│ 沖縄       │
+│ 石川       │
+│ 神奈川     │
+│ 福岡       │
+└────────────┘
+   10 rows
+```
+
+2 つの結果の差や共通部分は、`EXCEPT` と `INTERSECT` で取れます（どちらも重複を除きます）。注文のない顧客は、顧客の ID から注文の ID を引いて求められます。
+
+```sql
+SELECT customer_id FROM customers
+EXCEPT
+SELECT customer_id FROM orders;
+```
+
+```text
+┌─────────────┐
+│ customer_id │
+│    int64    │
+├─────────────┤
+│         261 │
+└─────────────┘
+```
+
+注文があり、かつ行動ログにも現れる顧客の数は次のとおりです。
+
+```sql
+SELECT count(*) AS n
+FROM (
+  SELECT customer_id FROM orders
+  INTERSECT
+  SELECT customer_id FROM events
+) AS both_sides;
+```
+
+```text
+┌───────┐
+│   n   │
+│ int64 │
+├───────┤
+│   504 │
+└───────┘
+```
+
+`EXCEPT` は、`LEFT JOIN ... IS NULL` や `NOT EXISTS` と同じ答えを返します。列の組全体を比べるので、`NULL` どうしは等しいものとして扱われる点が `=` と違います。
+
+## 表を作る、書き換える
+
+ここまでは読む SQL でした。データを作って書き換える文も、基本の形を知っておきます。深い話（制約、トランザクション）は第 7 章で扱います。`CREATE TABLE ... AS SELECT` は、クエリの結果から新しい表を作ります。飲み物の商品だけの表を作ります。
+
+```sql
+CREATE TABLE my_products AS
+SELECT product_id, name, price FROM products WHERE category = '飲み物';
+```
+
+作った表に 1 行足し、更新し、確かめ、消します。`INSERT` は行を追加し、`UPDATE` は条件に合う行を書き換え、`DELETE` は条件に合う行を消します。
+
+```sql
+INSERT INTO my_products VALUES (999, 'テスト商品', 100);
+```
+
+```sql
+UPDATE my_products SET price = price + 100 WHERE product_id = 999;
+```
+
+```sql
+SELECT product_id, name, price FROM my_products WHERE product_id = 999;
+```
+
+```text
+┌────────────┬────────────┬───────┐
+│ product_id │    name    │ price │
+│   int64    │  varchar   │ int64 │
+├────────────┼────────────┼───────┤
+│        999 │ テスト商品 │   200 │
+└────────────┴────────────┴───────┘
+```
+
+```sql
+DELETE FROM my_products WHERE product_id = 999;
+```
+
+`UPDATE` と `DELETE` で `WHERE` を書き忘れると、全行が書き換わる・消えるので、実行する前に同じ `WHERE` で `SELECT` して、対象の行数を確かめる習慣をつけてください。`CREATE VIEW` は、クエリに名前を付けて、表のように使えるようにします。データは複製されず、使うたびに元のクエリが走ります。
+
+```sql
+CREATE VIEW cheap_products AS
+SELECT product_id, name, price FROM products WHERE price < 1000;
+```
+
+```sql
+SELECT count(*) AS n FROM cheap_products;
+```
+
+```text
+┌───────┐
+│   n   │
+│ int64 │
+├───────┤
+│    10 │
+└───────┘
+```
+
+型と制約を決めて表を作るときは、`CREATE TABLE` に列と型を書きます。主キー（行を一意に決める列）を付けた表に同じキーを入れると、データベースが止めてくれます。
+
+```sql
+CREATE TABLE memo (id INTEGER PRIMARY KEY, body VARCHAR NOT NULL);
+```
+
+```sql
+INSERT INTO memo VALUES (1, 'one'), (1, 'two');
+```
+
+```text
+Constraint Error: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1"
+```
+
+これらの文は `examples/b05/ddl.sql` にあり、上から順に流さないと動きません（前の文で作った表を使うため）。最後の文は、重複キーのエラーで止まるのが正しい動きです。流した後の `shop.duckdb` は、表が増えた状態になります。本の数字と合わなくなったときは、`shop.duckdb` を削除してから、もう一度 `run_sql.py` を流せば、元のデータで作り直されます。
+
 ## SQL は書いた順に動かない
 
 SQL は、書く順（`SELECT` が先頭）と、評価される順が違います。論理的な評価の順序は、次のとおりです。
@@ -866,7 +1089,14 @@ SELECT price * 2 AS double_price FROM products WHERE double_price > 11000;
 └──────────────┘
 ```
 
-DuckDB で動いた SQL が、PostgreSQL や他の製品で動かないことがあるのは、このような方言の差があるからです。本番の DWH に流す前に、その製品で動かして確かめます。もう 1 つ、整数の割り算の差があります。`7 / 2` は PostgreSQL では 3（整数の割り算）で、DuckDB では 3.5 です。DuckDB で整数の割り算をするには `//` を使います。
+DuckDB 2.0.0 で試すと、この別名が通ります。DuckDB で動いた SQL が PostgreSQL や他の製品で動かないことがあるのは、このような方言の差があるからです。ほかにも、次のような差があります。
+
+- 間隔の書き方。この章では `INTERVAL '1 day'` と書いています（PostgreSQL でも通る形）。DuckDB は `INTERVAL 1 DAY` の短縮形も許します。
+- `GROUP BY` で `SELECT` の別名を使う書き方。PostgreSQL の文書によると、SQL-92 では入力列の式しか書けず、出力列の名前を許すのは PostgreSQL などの拡張です。
+- `QUALIFY`（第 6 章）、`arg_max`、`PIVOT` 文は DuckDB などの拡張で、PostgreSQL にはありません。
+- 集約の `FILTER (WHERE ...)` は標準 SQL ですが、MySQL・SQL Server・Oracle などには無く、`CASE` で書き換えます。
+
+本番の DWH（データウェアハウス。分析用に大量のデータを集めて持つ DB）に流す前に、その製品で動かして確かめます。もう 1 つ、整数の割り算の差があります。`7 / 2` は PostgreSQL では 3（整数の割り算）で、DuckDB では 3.5 です。DuckDB で整数の割り算をするには `//` を使います。
 
 ```sql
 SELECT 7 / 2 AS slash, 7 // 2 AS int_div;
@@ -953,14 +1183,20 @@ SELECT 7 / 2 AS slash, 7 // 2 AS int_div;
     ```
     顧客は 505 人で、キャンセルのある顧客は本文のとおり 334 人です。したがって 505 - 334 = 171 人になります。`LEFT JOIN ... WHERE o.status = 'cancelled'` は、右側が `NULL` の行（キャンセルのない顧客）を `WHERE` が落とすので、数えたい顧客がちょうど消えます。条件を `ON` に移して、右側が `NULL` の行を数える書き方でも求められます。
 
-問 4. 6 月の注文の件数を、`BETWEEN` と「以上、未満」の 2 通りで書いて比べてください。差が出ないのはなぜですか。差が出る場合は、どういう場合ですか。
+問 4. 3 月の注文の件数を、`BETWEEN '2026-03-01' AND '2026-03-31'` と「以上、未満」の 2 通りで書いて比べてください。差は何件ですか。また、6 月では同じ書き方で差が出ません。なぜですか。
 
 ??? note "解答例"
     ```sql
     SELECT count(*) FROM orders
-    WHERE ordered_at >= '2026-06-01' AND ordered_at < '2026-07-01';
+    WHERE ordered_at >= '2026-03-01' AND ordered_at < '2026-04-01';
     ```
-    `BETWEEN '2026-06-01' AND '2026-06-30'` だと、6 月 30 日の 0 時 0 分 0 秒より後の注文が落ちます。このデータには 6 月 30 日の注文が無い（最後の注文は 6 月 28 日）ので、差が出ません。差が出るのは、末日にも注文があるデータです。今回のデータで差が出ないことは、書き方が正しいことの証拠にはなりません。
+
+    ```sql
+    SELECT count(*) FROM orders
+    WHERE ordered_at BETWEEN '2026-03-01' AND '2026-03-31';
+    ```
+
+    「以上、未満」は 820 件、`BETWEEN` は 789 件で、差の 31 件は 3 月 31 日の 0 時 0 分 0 秒より後の注文です（文字列で比べると `'2026-03-31 12:00:00'` は `'2026-03-31'` より大きいため、範囲から外れます）。6 月は、最後の注文が 6 月 28 日（`select max(ordered_at)` で確かめられます）で末日に注文が無いので、どちらの書き方でも 155 件になり、差が出ません。差が出ないことは、書き方が正しい証拠にはなりません。末日に注文が入った月になって初めて壊れます。
 
 ## 参考文献
 

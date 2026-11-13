@@ -186,7 +186,7 @@ def write_history_csv(path) -> None:
     apply_scd2(con, date(2026, 4, 1))
     after = history_rows(con, movers[0])
     with open(path, "w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["時点", "customer_key", "customer_id", "prefecture", "valid_from", "valid_to", "is_current"])
         for label, rows in (("変更前", before), ("変更後", after)):
             for key, cid, pref, vf, vt, cur in rows:

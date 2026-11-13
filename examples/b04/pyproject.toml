@@ -1,0 +1,14 @@
+[project]
+name = "neboske-etl"
+version = "0.1.0"
+description = "ねぼすけ商店の注文 CSV を検証して Parquet にする"
+requires-python = ">=3.12"
+dependencies = [
+    "pyarrow>=26,<27",
+    "boto3>=1.44,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+]

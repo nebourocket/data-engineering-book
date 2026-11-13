@@ -1,0 +1,10 @@
+この章で使った DuckDB の書き方,意味,PostgreSQL での書き方
+CREATE OR REPLACE TABLE / SEQUENCE,あれば作り直す,DROP TABLE IF EXISTS をしてから CREATE TABLE（PostgreSQL の CREATE OR REPLACE は VIEW や関数向け）
+"range(開始, 終了, INTERVAL 1 DAY)",日付を 1 日ずつ並べる,"generate_series(開始, 終了, INTERVAL '1 day')"
+isodow(d),曜日の番号（月曜が 1）,EXTRACT(isodow FROM d)
+"strftime(d, '%Y%m%d')",日付を文字列に直す,"to_char(d, 'YYYYMMDD')"
+last_day(d),その月の末日,"date_trunc('month', d) + INTERVAL '1 month' - INTERVAL '1 day'"
+"date_diff('day', a, b)",日数の差,b::date - a::date（日付どうしの引き算）
+unnest(?),配列を行に広げる,unnest(配列)。パラメータは psycopg なら %s
+CREATE TEMP TABLE ... AS,一時的な表を作る,同じ書き方が使える
+GROUP BY ALL,集計されていない列すべてでグループ化,列を書き並べる

@@ -3,8 +3,12 @@
 MkDocs には依存しません（応用編の非公開リポジトリからも import します）。
 長さの範囲と examples の接頭辞（基礎編は b、応用編は a）は引数で変えられます。
 """
+import ast
 import csv
+import json
 import re
+import subprocess
+import textwrap
 from pathlib import Path
 
 BASICS_RANGE = (7000, 16000)
@@ -23,6 +27,8 @@ ALIASES = {
 }
 # 出力や図なので examples との一致を求めない言語。
 EXEMPT_LANGS = {"text", "mermaid", "output"}
+# info 文字列にこの語があるブロックは、抜粋として構文検査を免除します（例: ```python title="a.py" excerpt）。
+EXCERPT_MARKER = "excerpt"
 # 短いブロックは、前後が空白（または端）の語としてだけ一致を認めます。
 SHORT_BLOCK = 20
 
@@ -90,6 +96,34 @@ def _lang(info: str) -> str:
         return ALIASES.get(m.group(1).lower(), m.group(1).lower()) if m else ""
     word = info.split()[0].lower() if info.split() else ""
     return ALIASES.get(word, word)
+
+
+def _is_excerpt(info: str) -> bool:
+    return EXCERPT_MARKER in re.findall(r"[^\s{}.=\"']+", info)[1:]
+
+
+def _syntax_error(lang: str, code: str):
+    """python・bash・json・yaml の構文エラーを文字列で返します（問題なし・対象外は None）。"""
+    if lang in ("python", "bash"):
+        code = textwrap.dedent(code)  # 一様にインデントされた断片（with の本体など）は抜粋として認めます
+    try:
+        if lang == "python":
+            ast.parse(code)
+        elif lang == "json":
+            json.loads(code)
+        elif lang == "yaml":
+            try:
+                import yaml
+            except ImportError:  # PyYAML が無い環境では yaml を検査しません
+                return None
+            list(yaml.safe_load_all(code))
+        elif lang == "bash":
+            r = subprocess.run(["bash", "-n"], input=code, capture_output=True, text=True)
+            if r.returncode:
+                return r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "bash -n failed"
+    except Exception as e:  # noqa: BLE001 - 各パーサの例外をそのまま報告する
+        return str(e).splitlines()[0] if str(e) else type(e).__name__
+    return None
 
 
 def _console_commands(code: str) -> str:
@@ -181,6 +215,8 @@ def check_chapter(path, *, examples_dir, tables_dir, glossary, length_range, pre
             elif lang not in CHECKED_LANGS:
                 errors.append(f"コード: 言語「{lang}」は使えません（{', '.join(sorted(CHECKED_LANGS | EXEMPT_LANGS))}, console）")
                 continue
+            if code.strip() and not _is_excerpt(info) and (msg := _syntax_error(lang, code)):
+                errors.append(f"コード: {lang} のブロックの構文が正しくありません（途中で切れた抜粋なら info に excerpt を付けます）: {msg}")
             code = _norm(code)
             if code and not any(_contains(f, code) for f in files):
                 errors.append(f"コード: {lang} のブロックが {label} の 1 つのファイルにありません: {code[:40]}…")

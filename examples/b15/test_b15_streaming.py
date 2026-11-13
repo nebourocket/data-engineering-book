@@ -90,3 +90,12 @@ def test_second_consumer_triggers_rebalance(kafka_bootstrap, topic):
     assert owned1 == [[0, 1, 2]]
     assert sorted(p for o in owned2 for p in o) == [0, 1, 2]  # 重ならず、全部が誰かの担当
     assert all(owned2)
+
+
+def test_key_partition_table_is_in_sync_and_matches_known_cases(tmp_path):
+    from examples.b15.key_partition import key_to_partition, write_table
+
+    write_table(tmp_path / "t.csv")
+    book_table = Path(__file__).resolve().parents[2] / "data" / "tables" / "b15-key-partition.csv"
+    assert (tmp_path / "t.csv").read_text(encoding="utf-8") == book_table.read_text(encoding="utf-8")
+    assert [key_to_partition(k) for k in ("91", "166", "200", "250")] == [0, 0, 1, 2]

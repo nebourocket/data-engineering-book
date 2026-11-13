@@ -1,6 +1,6 @@
 """ねぼすけ商店の日次売上ダッシュボードを、取り込みから図まで 1 本で通します。
 
-  取り込み (ingest.land) → raw (ingest.load_raw) → dbt build (第10章のプロジェクト) → 品質チェック (quality) → 図 (dashboard)
+  取り込み (ingest.land) → raw (ingest.load_raw) → dbt build (第10章のプロジェクト) → 品質チェック (checks + 第13章の gate) → 図 (dashboard)
 
 どこかで失敗したら、そこで止まります (後ろの工程は動きません)。同じ dt で何度実行しても同じ結果です。
   python examples/b16/pipeline.py --dt 2026-07-01 --workdir work/b16 [--bucket neboske-lake]
@@ -16,7 +16,8 @@ from pathlib import Path
 import duckdb
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from examples.b16 import dashboard, ingest, quality  # noqa: E402
+from examples.b16 import checks, dashboard, ingest  # noqa: E402
+from examples.b16.checks import dq  # noqa: E402
 from examples.b16.store import LocalS3  # noqa: E402
 
 DBT_PROJECT = Path(__file__).resolve().parents[1] / "b10"  # 第10章の dbt プロジェクトを、そのまま使う
@@ -32,7 +33,7 @@ def dbt_build(workdir, db_path):
     env = {**os.environ, "DBT_DUCKDB_PATH": str(db_path), "DBT_SEND_ANONYMOUS_USAGE_STATS": "False"}
     try:
         result = subprocess.run(
-            ["dbt", "build", "--exclude", "tag:known_issue", "--project-dir", str(project),
+            ["dbt", "build", "--full-refresh", "--exclude", "tag:known_issue", "--project-dir", str(project),
              "--profiles-dir", str(project), "--no-use-colors"], capture_output=True, text=True, env=env)
     except FileNotFoundError:
         raise RuntimeError("dbt コマンドが見つかりません (pip install dbt-duckdb か、開発用イメージで動かしてください)")
@@ -54,11 +55,13 @@ def run(s3, bucket, dt, workdir):
     dbt_build(workdir, db_path)
     con = duckdb.connect(str(db_path))
     try:
+        if con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = 'dq_results'").fetchall()[0][0]:
+            con.execute("DELETE FROM dq_results WHERE run_id = ?", [dt])  # 同じ日を再実行しても、結果は 1 組だけにする
         try:
-            quality.run_checks(con, dt)
+            dq.gate(con, checks.sales_checks(), dt)  # warn の不合格は [WARN] と表示され、error の不合格は QualityError で止まる
         finally:
             for name, severity, passed in con.execute(
-                    "SELECT check_name, severity, passed FROM dq_results WHERE run_dt = ? ORDER BY rowid", [dt]).fetchall():
+                    "SELECT check_name, severity, passed FROM dq_results WHERE run_id = ? ORDER BY rowid", [dt]).fetchall():
                 print(f"  {'OK  ' if passed else severity.upper():5} {name}")
         figure = workdir / f"dashboard_{dt}.svg"
         dashboard.draw(con, dt, figure)

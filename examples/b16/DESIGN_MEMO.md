@@ -12,12 +12,12 @@
 
 ## 全体の流れ
 取り込み (landing に置く。events は第9章の仕組み) → raw (DuckDB) → dbt (第10章のプロジェクト)
-→ 品質チェック (5 件) → 図 (SVG)。どこかで失敗したら後ろの工程は動かない。
+→ 品質チェック (6 件。第13章の仕組み) → 図 (SVG)。どこかで失敗したら後ろの工程は動かない。
 
 ## 動かし方
     docker compose up -d --wait
     sh examples/b16/run-minio.sh      (サービスなしなら run-local.sh)
-結果は work/b16/ にできる。同じ日付で何度実行しても同じ結果になる (landing のキーは上書き、raw と dbt は作り直し、dq_results は日付ごとに入れ替え)。
+結果は work/b16/ にできる。同じ日付で何度実行しても同じ結果になる (landing は同じキーの上書きで、置き直す前に前回の _SUCCESS を消す。raw 表は作り直し。dbt は --full-refresh で全部作り直す。fct_daily_sales が増分モデルで、前回の結果が混ざらないようにするため。dq_results は日付ごとに入れ替え)。
 
 ## 品質チェックと、止める基準
 - error (止める): orders が空 / 日別売上の日付の NULL・重複 / 日別売上の合計が raw の明細と不一致。

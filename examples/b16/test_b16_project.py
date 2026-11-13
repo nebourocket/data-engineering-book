@@ -7,7 +7,8 @@ import duckdb
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from examples.b16 import ingest, quality  # noqa: E402
+from examples.b16 import checks, ingest  # noqa: E402
+from examples.b16.checks import dq  # noqa: E402
 from examples.b16.pipeline import make_client, run  # noqa: E402
 from examples.b16.store import LocalS3  # noqa: E402
 
@@ -26,7 +27,15 @@ def results(workdir, dt=DT):
     con = duckdb.connect(str(Path(workdir) / "warehouse.duckdb"), read_only=True)
     try:
         return con.execute(
-            "SELECT check_name, severity, passed FROM dq_results WHERE run_dt = ? ORDER BY rowid", [dt]).fetchall()
+            "SELECT check_name, severity, passed FROM dq_results WHERE run_id = ? ORDER BY rowid", [dt]).fetchall()
+    finally:
+        con.close()
+
+
+def events_count(workdir):
+    con = duckdb.connect(str(Path(workdir) / "warehouse.duckdb"), read_only=True)
+    try:
+        return con.execute("SELECT count(*) FROM main.events").fetchall()[0][0]
     finally:
         con.close()
 
@@ -43,8 +52,8 @@ def test_pipeline_end_to_end_with_local_store(tmp_path, local):
     figure = run(local, BUCKET, DT, tmp_path)
     assert figure.read_text(encoding="utf-8").lstrip().startswith(("<?xml", "<svg"))
     outcome = results(tmp_path)
-    assert len(outcome) == len(quality.CHECKS)
-    assert {name for name, severity, passed in outcome if not passed} == {"events の event_id が重複していない"}
+    assert len(outcome) == len(checks.sales_checks())
+    assert {name for name, severity, passed in outcome if not passed} == {"main.events.event_id_unique"}
     assert all(severity == "warn" for _, severity, passed in outcome if not passed)  # 落ちたのは warn だけ
     # 第 10 章の mart と同じ定義: キャンセルを除いた日別売上
     con = duckdb.connect(str(tmp_path / "warehouse.duckdb"), read_only=True)
@@ -56,9 +65,9 @@ def test_pipeline_end_to_end_with_local_store(tmp_path, local):
 
 def test_rerun_gives_same_result(tmp_path, local):
     run(local, BUCKET, DT, tmp_path)
-    first = (mart(tmp_path), results(tmp_path))
+    first = (mart(tmp_path), results(tmp_path), events_count(tmp_path))
     run(local, BUCKET, DT, tmp_path)
-    assert (mart(tmp_path), results(tmp_path)) == first  # 冪等: dq_results も 2 組にならない
+    assert (mart(tmp_path), results(tmp_path), events_count(tmp_path)) == first  # 冪等: dq_results も 2 組にならない
 
 
 class Recording(LocalS3):
@@ -104,7 +113,7 @@ def test_load_refuses_partition_without_success_marker(local):
         ingest.load_raw(duckdb.connect(), local, BUCKET, DT)
 
 
-def test_error_check_stops_before_figure():
+def test_reconciliation_error_stops_the_gate():
     con = duckdb.connect()
     con.execute("CREATE SCHEMA analytics")
     con.execute("CREATE TABLE main.orders AS SELECT 1 AS order_id, 'placed' AS status")
@@ -112,18 +121,10 @@ def test_error_check_stops_before_figure():
     con.execute("CREATE TABLE main.order_items AS SELECT 1 AS order_id, 1 AS quantity, 90 AS unit_price")  # 合計が合わない
     con.execute("CREATE TABLE main.events AS SELECT 1 AS event_id, '2026-01-01 00:00:00' AS event_time, "
                 "'2026-01-01 00:00:05' AS received_at")
-    with pytest.raises(quality.QualityError, match="一致する"):
-        quality.run_checks(con, DT)
+    with pytest.raises(dq.QualityError, match="一致する"):
+        dq.gate(con, checks.sales_checks(), DT, notify=lambda message: None)
     # 止まる前に、全部の結果が記録されている
-    assert con.execute("SELECT count(*) FROM dq_results").fetchone() == (len(quality.CHECKS),)
-
-
-def test_null_date_is_counted_once():
-    con = duckdb.connect()
-    con.execute("CREATE SCHEMA analytics")
-    con.execute("CREATE TABLE analytics.fct_daily_sales AS SELECT * FROM (VALUES (DATE '2026-01-01', 1), (NULL, 2)) t(order_date, sales)")
-    bad, total = con.execute(quality.CHECKS[1].sql).fetchone()
-    assert (bad, total) == (1, 2)  # NULL の行は 1 回だけ数える
+    assert con.execute("SELECT count(*) FROM dq_results").fetchone() == (len(checks.sales_checks()),)
 
 
 def test_pipeline_with_minio(tmp_path, s3_client):  # s3_client があると S3_ENDPOINT の設定が確かめられる
@@ -136,6 +137,9 @@ def test_pipeline_with_minio(tmp_path, s3_client):  # s3_client があると S3_
         assert f"raw/dt={DT}/_SUCCESS" in keys and f"raw/dt={DT}/orders.parquet" in keys
         assert any(k.startswith("landing/events/dt=") and k.endswith("/_SUCCESS") for k in keys)
         assert mart(tmp_path)[0] > 0
+        outcome = results(tmp_path)  # MinIO 版でも、落ちたのは warn の 1 件だけ
+        assert [name for name, severity, passed in outcome if not passed] == ["main.events.event_id_unique"]
+        assert all(severity == "warn" for _, severity, passed in outcome if not passed)
     finally:
         for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket):
             for o in page.get("Contents", []):
@@ -148,8 +152,9 @@ def test_interview_queries_run(tmp_path, local):
     con = duckdb.connect(str(tmp_path / "warehouse.duckdb"), read_only=True)
     statements = [s.strip() for s in (Path(__file__).parent / "interview.sql").read_text(encoding="utf-8").split(";")]
     outputs = [con.execute(s).fetchall() for s in statements if "SELECT" in s]
-    assert len(outputs) == 3
-    first_orders, moving, check = outputs
+    assert len(outputs) == 4
+    first_orders, moving, check, qualify = outputs
+    assert qualify == first_orders  # QUALIFY 版も同じ結果 (DuckDB のみ)
     assert len({r[0] for r in first_orders}) == len(first_orders)  # 顧客ごとに 1 行
     assert len(moving) == mart(tmp_path)[0]
     assert check == [(3000, 3000)]  # 全注文に明細がある

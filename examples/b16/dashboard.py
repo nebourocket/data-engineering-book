@@ -19,7 +19,7 @@ def draw(con, run_dt, out_path):
     sales = con.execute("""
         SELECT order_date, sales FROM analytics.fct_daily_sales ORDER BY order_date""").fetchall()
     checks = con.execute("""
-        SELECT check_name, severity, passed FROM dq_results WHERE run_dt = ? ORDER BY rowid""", [run_dt]).fetchall()
+        SELECT check_name, severity, passed FROM dq_results WHERE run_id = ? ORDER BY rowid""", [run_dt]).fetchall()
     days = [d for d, _ in sales]
     values = [v for _, v in sales]
     average = [sum(values[max(0, i - 6):i + 1]) / len(values[max(0, i - 6):i + 1]) for i in range(len(values))]

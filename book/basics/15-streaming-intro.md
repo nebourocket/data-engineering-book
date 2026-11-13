@@ -59,6 +59,8 @@ Apache Kafka は、ログを大量に、複数台で分担して持てるよう�
 
 この章の手を動かす部分では、Redpanda を使います。Redpanda は Kafka API 互換のブローカーで、Kafka 用に書かれたクライアントのプログラムが、接続先を変えるだけで動くように作られています (参考文献 2)。1 台の Docker コンテナで軽く動くので、学習に向いています。
 
+互換性の根拠も書いておきます。Redpanda のドキュメントの互換性のページ (参考文献 2。2026年11月14日に確認) には、検証済みのクライアントの一覧があり、この章で使う librdkafka と confluent-kafka-python もそこに載っています。ただし、そのページは Redpanda の最新版についての記述です。この本の `compose.yaml` が起動するのは v24.3.1 で、この章のコードと出力は、その版で実際に動かして確かめたものです。別の版では、細かな挙動が違うことがあります。
+
 どこまでが Kafka 共通で、どこからが Redpanda 固有かを、混ぜずに書きます。
 
 - Kafka 共通 (Apache Kafka でも同じ): トピック・パーティション・オフセット・プロデューサー・コンシューマー・コンシューマーグループ・コミットといった考え方と、Python の `confluent-kafka` で書いたコード。この章の本文のほとんどです。
@@ -94,9 +96,36 @@ retention.ms                          604800000   DEFAULT_CONFIG
 
 この章のコードは `examples/b15/` にあります。Redpanda が要るので、リポジトリの直下で `docker compose up -d --wait` を実行してから動かします (WSL や Linux のシェルを前提にした例です)。`demo.py` は、トピックを作り、イベントを送り、4 通りの読み方をして、結果を表示します。トピック名は実行ごとにランダムな名前を付けるので、前に動かした結果と混ざりません。
 
+先に、起動できているかを確かめます。`docker compose` の詳しい説明は第14章にあります。
+
+```bash
+docker compose ps
+docker compose exec redpanda rpk cluster health
+```
+
+`docker compose ps` は、起動しているサービスの一覧を出します。`STATUS` の列に `healthy` と出ていれば、そのサービスは起動して使える状態です (`starting` なら、もう少し待ちます)。`rpk cluster health` は Redpanda に自分の健康状態を聞くコマンドで、出力の `Healthy:` が `true` なら正常です。
+
+```text
+Healthy:                          true
+```
+
+(出力の一部です。)確認できたら、デモを動かします。
+
 ```bash
 docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e KAFKA_BOOTSTRAP=localhost:19092 -v "$PWD":/w -w /w de-book-dev python examples/b15/demo.py
 ```
+
+このコマンドの部品を、1 つずつ説明します。
+
+- `docker run`: 指定したイメージからコンテナ (隔離された小さな実行環境) を作って、最後に書いたコマンドを動かします。
+- `--rm`: コマンドが終わったら、コンテナを自動で消します。
+- `--network host`: コンテナが、手元のマシンと同じネットワークを使います。これで、コンテナの中の `localhost:19092` が、手元で動いている Redpanda に届きます。
+- `--user "$(id -u):$(id -g)"`: 自分のユーザー番号とグループ番号でコマンドを動かします (`$(…)` は、中のコマンドの結果をその場に埋め込む書き方です)。これを付けないと、コンテナが書き出したファイルの持ち主が root になり、手元で消しにくくなります。
+- `-e HOME=/tmp`: 環境変数 `HOME` を `/tmp` に設定します。コンテナの中の「あなたのユーザー」にはホームフォルダが無く、ツールが設定ファイルを書こうとして失敗するのを避けます。
+- `-e KAFKA_BOOTSTRAP=localhost:19092`: 接続先を環境変数で渡します。bootstrap (ブートストラップ) は、最初に問い合わせるブローカーのアドレスという意味です。
+- `-v "$PWD":/w` と `-w /w`: 今いるフォルダ (`$PWD`) をコンテナの `/w` に見せ、作業フォルダを `/w` にします。リポジトリのファイルがコンテナの中から読めるようになります。
+- `de-book-dev`: 使うイメージの名前です。README の手順 (`docker build -t de-book-dev .`) で作っておきます。
+- `python examples/b15/demo.py`: コンテナの中で動かすコマンドです。
 
 環境によっては、`localhost` を IPv6 で試して失敗した旨の警告 (`Connect to ipv6#[::1]:19092 failed`) が rdkafka から表示されます。IPv4 でつながって結果が出ていれば、無視して構いません。
 
@@ -138,11 +167,22 @@ def produce_events(bootstrap, topic, events):
     return placed
 ```
 
-キーは、どのパーティションに入れるかを決める材料です。クライアントは、キーの値から計算した数をパーティションの数で割った余りで、行き先を決めます。同じキーなら同じ行き先になります。キーを付けないと、パーティションをばらして振るので、同じ顧客のイベントが別々のパーティションに散らばります。
+キーは、どのパーティションに入れるかを決める材料です。仕組みを、小さな例で見ます。クライアントは、キーの文字列をハッシュ関数にかけて数を作り、その数をパーティションの数で割った余りを行き先にします。ハッシュ関数は、同じ入力からは必ず同じ数を作り、入力が少し違うと、まったく別の数を作る関数です。`confluent-kafka` の既定では、CRC32 というハッシュ関数を使います。
+
+```python title="key_partition.py"
+def key_to_partition(key, partitions=3):
+    return zlib.crc32(key.encode("utf-8")) % partitions
+```
+
+`zlib.crc32` は、バイト列を受け取って数を返します。文字列を `encode("utf-8")` でバイト列にしてから渡しています。顧客番号 4 つで計算した結果が、次の表です (表は `key_partition.py` が CSV に書き出し、そこから作っています)。
+
+{{ table("b15-key-partition") }}
+
+たとえばキー `200` は、CRC32 が 556920499 で、これを 3 で割ると 1 余るので、パーティション 1 に入ります。何度計算しても、同じキーは同じ行き先です。だから、同じ顧客のイベントは、必ず同じパーティションに並びます。逆に、キー `91` と `166` が同じパーティション 0 に入っているように、別のキーが同じ行き先になることもあります (割り算の余りは 3 通りしかないためです)。キーを付けないと、パーティションをばらして振るので、同じ顧客のイベントが別々のパーティションに散らばります。
 
 ここで製品差に注意します。計算方法は、ブローカーではなくクライアントの実装が決めます。Java の Kafka クライアントの既定は murmur2 というハッシュを使いますが、この章で使う `confluent-kafka` (内部は librdkafka) の既定の `partitioner` は、キーの CRC32 を使う `consistent_random` です (参考文献 5)。実際に、本章のテストでは、顧客番号の文字列の CRC32 をパーティション数 3 で割った余りが、送った先と一致することを確かめています。言語やクライアントが違うと、同じキーでも別のパーティションに入ることがあります。複数の言語で同じトピックに書くなら、そろえる必要があります。
 
-もう 1 つ、`enable.idempotence` は混同しやすい設定です。これは、プロデューサーが送信を内部で自動的にやり直したときに、ブローカーに二重に書かれないようにするものです。プログラムが同じイベントを 2 回 `produce` する場合 (今回の再送 5 件) は防げません。層が違います。
+もう 1 つ、`enable.idempotence` は混同しやすい設定です。送信は、ネットワークの都合で「届いたかどうか分からない」ことがあり、クライアントのライブラリは、自動で送り直します。このとき、最初の送信も実は届いていたら、ブローカーに同じメッセージが 2 つ書かれてしまいます。`enable.idempotence` を `True` にすると、ライブラリが送るメッセージに通し番号を付け、ブローカーが同じ番号の二重書き込みを捨てます。つまり、これは「ライブラリの内部の自動再送」で起きる重複だけを防ぐ仕組みです。一方、今回の再送 5 件は、私たちのプログラムが、同じイベントを 2 回 `produce` と呼んだものです。ライブラリから見ると、別々の 2 つのメッセージで、通し番号も別になるので、防げません。防ぐ層が違うので、受け取る側 (コンシューマー) の冪等さは、結局必要になります。
 
 実行結果です。
 
@@ -241,6 +281,20 @@ def consume(bootstrap, topic, group_id, con, commit=True, expected=None, idle_se
         consumer.close()
     return processed
 ```
+
+コードを 1 行ずつ読みます。
+
+- `consumer = Consumer({...})`: コンシューマーを作ります。設定は辞書 (名前と値の組) で渡します。`group.id` は所属するグループの名前、`auto.offset.reset: earliest` は、このグループにコミット済みの位置が無いときに先頭から読む、という指定です。
+- `consumer.subscribe([topic])`: 読むトピックを登録します。パーティションの割り当ては、グループの仲間と相談して、ライブラリが裏で決めます。
+- `processed, last_message = 0, time.monotonic()`: 処理した件数と、最後にメッセージを受け取った時刻を覚えておきます。`time.monotonic()` は、時刻合わせで逆戻りしない時計で、経過時間を測るのに使います (`time.time()` は、システムの時刻が直されると飛ぶことがあります)。
+- `while time.monotonic() - last_message < idle_seconds:`: 「最後のメッセージから `idle_seconds` 秒たつまで」繰り返します。つまり、しばらく何も来なくなったら終わる、というデモ向けの終わり方です。常駐するコンシューマーなら、ここは「止める合図が来るまで」の繰り返しになります。
+- `msg = consumer.poll(1.0)`: 最大 1 秒待って、メッセージを 1 件受け取ります。何も来なければ `None` が返ります。`poll` は、グループに「まだ生きています」と知らせる役割も兼ねるので、定期的に呼び続ける必要があります (これが、後述の `max.poll.interval.ms` の話です)。
+- `if msg is None: continue`: 何も来なかった周回は、残りを飛ばして次の周回に進みます。
+- `if msg.error(): raise ...`: `poll` は、メッセージの代わりにエラーを返すことがあります。見逃さず、例外にして止めます。
+- `handle(con, msg)`: 1 件の処理です (書き込み先への上書き)。
+- `if commit and processed % 50 == 0:`: `%` は割り算の余りです。50 件処理するごとに、`commit` でそこまでの位置を確定します。1 件ごとに確定するとブローカーとのやりとりが増えて遅くなり、最後にしか確定しないと、落ちたときに全部やり直しになります。50 は目安で、「落ちたとき何件やり直してもよいか」と「速さ」の釣り合いで決めます。やり直しで重複しても、書き込み先が冪等なら困りません。
+- `finally: consumer.close()`: `try` の中で例外が出ても出なくても、最後に必ず実行されます。`close` は、グループから正式に抜ける操作です。抜けずに終わると、ブローカーはメンバーが消えたことに気づくまで待たされ、その間、リバランスが遅れます。
+- `if commit and processed:` の最後のコミットは、端数の分 (50 件に満たない分) を確定します。1 件も読んでいないときは、確定する位置が無くエラーになるので、`processed` が 0 のときは呼びません。
 
 ポイントは 3 つです。`enable.auto.commit` を `False` にして、自動コミットを止めていること。自動コミットは、一定時間ごとにバックグラウンドで位置を確定するので、処理の完了と無関係にコミットされ、取りこぼしの原因になります。次に、`handle` (処理) の後にコミットしていること。最後に、`commit=False` で、あえてコミットしない動作もできるようにしていることです。
 
@@ -416,8 +470,8 @@ def minute_counts(con):
 ## 参考文献
 
 1. Apache Kafka Documentation. <https://kafka.apache.org/documentation/>（トピック・パーティション・レプリケーション・コンシューマーグループ・メッセージ配信の保証・保持期間の設定。2026年11月時点）
-2. Redpanda Documentation. <https://docs.redpanda.com/>（Kafka API 互換、`rpk`、トピックの既定設定。この章の動作確認は Redpanda v24.3.1）
+2. Redpanda Documentation. "Kafka Compatibility". <https://docs.redpanda.com/current/develop/kafka-clients/>（検証済みクライアントの一覧。2026年11月14日に確認した最新版の記述。この章の動作確認は `compose.yaml` の Redpanda v24.3.1）。製品全体は <https://docs.redpanda.com/>（`rpk`、トピックの既定設定）
 3. Joe Reis, Matt Housley. *Fundamentals of Data Engineering*. O'Reilly Media, 2022. 第 7 章 (Ingestion)。
 4. Gwen Shapira, Todd Palino, Rajini Sivaram, Krit Petty. *Kafka: The Definitive Guide*, 2nd Edition (Early Release, 2020). O'Reilly Media. 第 1 章 (Meet Kafka)。コミットログ、トピックとパーティション、順序、コンシューマーグループ、保持期間の説明。
 5. librdkafka. "Configuration properties". <https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md>（`partitioner`、`enable.idempotence`、`enable.auto.commit`）
-6. Confluent. "confluent-kafka-python" Documentation. <https://docs.confluent.io/platform/current/clients/confluent-kafka-python/html/index.html>
+6. Confluent. "confluent-kafka-python" Documentation (この本の `requirements.txt` の版は confluent-kafka 2.16.1)。 <https://docs.confluent.io/platform/current/clients/confluent-kafka-python/html/index.html>

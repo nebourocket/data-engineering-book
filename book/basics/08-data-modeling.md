@@ -308,13 +308,14 @@ FROM customers_today AS t
 WHERE t.customer_id NOT IN (SELECT customer_id FROM dim_customer)
 ```
 
-4 つを 1 つのトランザクションにまとめたのが次の関数です。途中で失敗しても、行を閉じただけで新しい版がない、という状態を残さないよう、例外が出たら `ROLLBACK` して、例外はそのまま上へ渡します。
+4 つを 1 つのトランザクションにまとめたのが次の関数です。この関数は自分で `BEGIN` を発行するので、すでにトランザクションを開いている接続の中では呼びません（入れ子にはできません）。途中で失敗しても、行を閉じただけで新しい版がない、という状態を残さないよう、例外が出たら `ROLLBACK` して、例外はそのまま上へ渡します。
 
 ```python
 def apply_scd2(con: duckdb.DuckDBPyConnection, as_of: date) -> int:
     """customers_today を取り込み、変更を履歴の行として残す。変更のあった顧客の数を返す。
 
     全体を 1 つのトランザクションにして、どこで失敗しても ROLLBACK する（行を閉じただけの状態を残さない）。
+    自分で BEGIN を発行するので、すでにトランザクションを開いている接続の中では呼べない。
     """
     con.execute("BEGIN")
     try:
@@ -420,62 +421,6 @@ HAVING count(*) FILTER (WHERE is_current) <> 1
 5. **ソースから消えた顧客。** 退会かもしれませんし、ソース側の事故かもしれません。この章の関数は何もせず、次の SQL で見つけるだけにしています。履歴の行を閉じるか、そのまま残すかは、業務に確認して決めます。
 
 ```sql
-WHERE t.customer_id NOT IN (SELECT customer_id FROM dim_customer)
-"""
-
-
-# 取り込む前の確認: ソースの customer_id が NULL や重複だと、現行の行が 2 つできてしまう。
-SOURCE_PROBLEMS_SQL = """
-SELECT count(*) - count(customer_id) AS null_ids,
-       count(customer_id) - count(DISTINCT customer_id) AS duplicate_ids
-FROM customers_today
-"""
-# 変わる顧客の現行の行が、as_of と同じかそれより新しい valid_from を持つと、区間が空や逆転になる。
-STALE_AS_OF_SQL = """
-SELECT count(*) FROM dim_customer
-WHERE is_current AND valid_from >= ? AND customer_id IN (SELECT customer_id FROM scd2_changes)
-"""
-
-
-def apply_scd2(con: duckdb.DuckDBPyConnection, as_of: date) -> int:
-    """customers_today を取り込み、変更を履歴の行として残す。変更のあった顧客の数を返す。
-
-    全体を 1 つのトランザクションにして、どこで失敗しても ROLLBACK する（行を閉じただけの状態を残さない）。
-    """
-    con.execute("BEGIN")
-    try:
-        null_ids, duplicate_ids = con.execute(SOURCE_PROBLEMS_SQL).fetchone()
-        if null_ids or duplicate_ids:
-            raise ValueError(f"customers_today に NULL の ID が {null_ids} 件、重複した ID が {duplicate_ids} 件あります")
-        con.execute(FIND_CHANGES_SQL)
-        if con.execute(STALE_AS_OF_SQL, [as_of]).fetchone()[0]:
-            raise ValueError("as_of が、現在の版の valid_from より前（または同じ）です")
-        changed = con.execute("SELECT count(*) FROM scd2_changes").fetchone()[0]
-        con.execute(CLOSE_OLD_SQL, [as_of])
-        con.execute(OPEN_NEW_SQL, [as_of])
-        con.execute(ADD_NEW_CUSTOMERS_SQL, [as_of])
-        con.execute("COMMIT")
-    except Exception:
-        con.execute("ROLLBACK")
-        raise
-    return changed
-
-
-# 取り込んだあとの確認クエリ。どれも「0 行」が正常。
-GAPS_OR_OVERLAPS_SQL = """
-SELECT customer_id, valid_from, valid_to, next_from FROM (
-    SELECT customer_id, valid_from, valid_to,
-           lead(valid_from) OVER (PARTITION BY customer_id ORDER BY valid_from) AS next_from
-    FROM dim_customer)
-WHERE next_from IS NOT NULL AND next_from <> valid_to
-"""
-BAD_CURRENT_SQL = """
-SELECT customer_id, count(*) FILTER (WHERE is_current) AS current_rows
-FROM dim_customer GROUP BY customer_id
-HAVING count(*) FILTER (WHERE is_current) <> 1
-"""
-# ソースから消えた顧客。この章の apply_scd2 は何もしない（消すか閉じるかは業務に聞いて決める）。
-VANISHED_SQL = """
 SELECT customer_id FROM dim_customer
 WHERE is_current AND customer_id > 0
   AND customer_id NOT IN (SELECT customer_id FROM customers_today WHERE customer_id IS NOT NULL)
@@ -703,7 +648,16 @@ Kimball の手法は、業務の質問から入る「下から積み上げる」
 **問2.** （手を動かす）`scd.py` の `run_scd2_demo` を実行したあと、顧客 1 の注文を、版ごとに数えてください。どの `customer_key` に、何件の注文がひも付いていますか。
 
 ??? note "解答例"
-    `ORDERS_BY_VERSION_SQL`（`fact_order_items` と `dim_customer` を `customer_key` で結合し、`customer_id = 1` を `customer_key` ごとに数える SQL）の結果は、`[(1, '愛知', 1), (506, '沖縄', 3)]` です。引っ越し前の注文 1 件は愛知の版（代理キー 1）、引っ越し後の注文 3 件は沖縄の版（代理キー 506）にひも付いています。キーが 2 種類出ることが、ファクトが「当時の版」を指している証拠です。
+    `scd.py` の `ORDERS_BY_VERSION_SQL` は、`customer_id = 1` を `customer_key` ごとに数える SQL です（`?` に 1 を渡します）。
+
+    ```sql
+    SELECT c.customer_key, c.prefecture, count(DISTINCT f.order_id) AS orders
+    FROM fact_order_items AS f JOIN dim_customer AS c USING (customer_key)
+    WHERE c.customer_id = ?
+    GROUP BY 1, 2 ORDER BY 1
+    ```
+
+    結果は、`[(1, '愛知', 1), (506, '沖縄', 3)]` です。引っ越し前の注文 1 件は愛知の版（代理キー 1）、引っ越し後の注文 3 件は沖縄の版（代理キー 506）にひも付いています。キーが 2 種類出ることが、ファクトが「当時の版」を指している証拠です。
 
 **問3.** （手を動かす）変わった顧客 1 人分の SCD2 を、自分で確かめてください。`customers_today` を作ったあと、1 人だけ都道府県を変えて `apply_scd2` を 2 回続けて呼ぶと、戻り値と `dim_customer` の行数はどうなりますか。
 

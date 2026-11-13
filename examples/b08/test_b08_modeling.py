@@ -128,12 +128,15 @@ def test_scd2_rejects_bad_source_and_rolls_back():
     assert dim_snapshot(con) == before  # どちらも何も変わっていない
 
 
-def test_scd2_failure_midway_rolls_back_and_can_retry():
+def test_scd2_failure_midway_rolls_back_and_can_retry(monkeypatch):
     con = setup_scd2()
     before = dim_snapshot(con)
+    # CLOSE_OLD（現行の行を閉じる）が済んだ後の OPEN_NEW で失敗させる
+    monkeypatch.setattr(scd, "OPEN_NEW_SQL", "INSERT INTO dim_customer SELECT * FROM no_such_table WHERE ? IS NOT NULL")
     with pytest.raises(duckdb.Error):
-        scd.apply_scd2(con, "not-a-date")  # 途中で型変換に失敗する
-    assert dim_snapshot(con) == before
+        scd.apply_scd2(con, date(2026, 4, 1))
+    assert dim_snapshot(con) == before  # 閉じた行も元に戻っている（現行フラグも valid_to も）
+    monkeypatch.undo()
     assert scd.apply_scd2(con, date(2026, 4, 1)) == 3  # トランザクションが残らず、そのままやり直せる
     assert scd.scd2_problems(con) == {"gaps_or_overlaps": [], "bad_current": [], "vanished": []}
 

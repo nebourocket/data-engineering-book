@@ -61,6 +61,7 @@ def apply_scd2(con: duckdb.DuckDBPyConnection, as_of: date) -> int:
     """customers_today を取り込み、変更を履歴の行として残す。変更のあった顧客の数を返す。
 
     全体を 1 つのトランザクションにして、どこで失敗しても ROLLBACK する（行を閉じただけの状態を残さない）。
+    自分で BEGIN を発行するので、すでにトランザクションを開いている接続の中では呼べない。
     """
     con.execute("BEGIN")
     try:

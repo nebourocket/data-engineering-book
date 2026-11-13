@@ -68,6 +68,9 @@ CREATE TABLE order_items (
     quantity   int NOT NULL CHECK (quantity > 0),
     unit_price numeric(12, 0) NOT NULL CHECK (unit_price > 0),
     PRIMARY KEY (order_id, line_no));
+-- 主キーと一意制約にはインデックスが自動で作られる。外部キーの列には自分で張る
+CREATE INDEX orders_customer_id_idx ON orders (customer_id);
+CREATE INDEX order_items_product_id_idx ON order_items (product_id)
 ```
 
 この DDL で表を作り、顧客・商品・注文・明細を 1 行ずつ入れてから、壊れた行を 6 つ試します。

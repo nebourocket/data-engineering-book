@@ -102,7 +102,7 @@ def upload(settings: Settings, path: Path) -> None:
         aws_access_key_id=settings.s3_access_key,
         aws_secret_access_key=settings.s3_secret_key,
         region_name="us-east-1",
-        config=Config(retries={"mode": "standard", "max_attempts": 5}),
+        config=Config(retries={"mode": "standard", "total_max_attempts": 5}),  # 最初の 1 回を含めて 5 回
     )
     client.upload_file(str(path), settings.s3_bucket, f"orders/{path.name}")
     logger.info("アップロード: s3://%s/orders/%s", settings.s3_bucket, path.name)

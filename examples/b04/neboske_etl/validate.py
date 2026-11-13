@@ -23,7 +23,7 @@ def parse_order(row: dict[str, str]) -> Order:
     try:
         local = datetime.strptime((row.get("ordered_at") or "").strip(), "%Y-%m-%d %H:%M:%S")
         ordered_at = local.replace(tzinfo=CSV_TIMEZONE).astimezone(timezone.utc)  # JST を UTC にそろえる
-    except ValueError:
+    except (ValueError, OverflowError):  # 0001-01-01 のように UTC に直せない日付も含む
         raise ValidationError("ordered_at", f"日時として読めません: {row.get('ordered_at')!r}") from None
     return Order(
         order_id=_to_int(row, "order_id", minimum=1),

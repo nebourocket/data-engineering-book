@@ -58,6 +58,7 @@ def test_status_case_is_normalized():
     ("order_id", "0", "1 以上"),
     ("total_amount", "-500", "0 以上"),
     ("ordered_at", "2026-13-45", "日時として読めません"),
+    ("ordered_at", "0001-01-01 00:00:00", "日時として読めません"),  # UTC に直すと範囲外
     ("status", "returned", "知らない値"),
     ("customer_id", "", "整数ではありません"),
 ])
@@ -203,9 +204,9 @@ def test_retry_does_not_retry_permanent_errors(error):
 class FlakyServer:
     """最初の数回は 500 を返し、そのあと JSON を返す小さな HTTP サーバ。"""
 
-    def __init__(self, failures):
+    def __init__(self, failures, truncated=0):
         outer = self
-        outer.failures, outer.hits = failures, 0
+        outer.failures, outer.truncated, outer.hits = failures, truncated, 0
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -213,6 +214,11 @@ class FlakyServer:
                 if self.path == "/missing":
                     self.send_response(404)
                     self.end_headers()
+                elif outer.hits <= outer.truncated:  # 本文が途中で切れる
+                    self.send_response(200)
+                    self.send_header("Content-Length", "100")
+                    self.end_headers()
+                    self.wfile.write(b'{"rate"')
                 elif outer.hits <= outer.failures:
                     self.send_response(500)
                     self.end_headers()
@@ -237,6 +243,16 @@ class FlakyServer:
 
 def test_fetch_json_retries_server_errors():
     server = FlakyServer(failures=2)
+    try:
+        waits = []
+        assert fetch_json(server.url + "/rate", sleep=waits.append) == {"rate": 150}
+        assert server.hits == 3 and len(waits) == 2
+    finally:
+        server.close()
+
+
+def test_fetch_json_retries_truncated_body():
+    server = FlakyServer(failures=0, truncated=2)
     try:
         waits = []
         assert fetch_json(server.url + "/rate", sleep=waits.append) == {"rate": 150}

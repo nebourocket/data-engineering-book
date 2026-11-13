@@ -122,7 +122,6 @@ CSV から読んだ値は、すべて文字列です。`"3400"` は金額では�
 そこで、データの入口（境界）で 1 回だけ、文字列を正しい型に直します。その型を表すのが **dataclass** です。
 
 ```python
-
 @dataclass(frozen=True, slots=True)
 class Order:
     order_id: int
@@ -130,6 +129,7 @@ class Order:
     ordered_at: datetime  # UTC（タイムゾーン付き）
     status: str
     item_count: int
+    total_amount: int
 ```
 
 `: int` のような書き方が**型ヒント**です。Python は実行時にはこれを検査しません（typing の公式ドキュメントにも、実行時には強制されないとあります）。しかし、エディタや `mypy` のような型検査ツールが、型の食い違いを実行前に見つけます。人間にとっても、「この関数は何を受け取って何を返すか」の説明になります。
@@ -147,13 +147,13 @@ class Order:
 行の失敗を表す例外を作ります。
 
 ```python
-
 class ValidationError(ValueError):
     """1 行の検証の失敗。どの項目が、なぜ悪いかを持ちます。"""
 
     def __init__(self, field: str, reason: str) -> None:
         super().__init__(f"{field}: {reason}")
         self.field = field
+        self.reason = reason
 ```
 
 `ValueError` を継承しているので、`except ValueError` を書いた既存のコードでも受け取れます。どの項目が悪いかを `field` に持たせると、除外した行の理由を後から集計できます。
@@ -181,7 +181,7 @@ def parse_order(row: dict[str, str]) -> Order:
     try:
         local = datetime.strptime((row.get("ordered_at") or "").strip(), "%Y-%m-%d %H:%M:%S")
         ordered_at = local.replace(tzinfo=CSV_TIMEZONE).astimezone(timezone.utc)  # JST を UTC にそろえる
-    except ValueError:
+    except (ValueError, OverflowError):  # 0001-01-01 のように UTC に直せない日付も含む
         raise ValidationError("ordered_at", f"日時として読めません: {row.get('ordered_at')!r}") from None
     return Order(
         order_id=_to_int(row, "order_id", minimum=1),
@@ -190,6 +190,7 @@ def parse_order(row: dict[str, str]) -> Order:
         status=status,
         item_count=_to_int(row, "item_count", minimum=1),
         total_amount=_to_int(row, "total_amount", minimum=0),
+    )
 ```
 
 3 点を見てください。
@@ -243,7 +244,8 @@ def call_with_retry(
 HTTP の API から JSON を取る場面で使います。何を再試行するかの判断が、ここでも大切です。
 
 ```python
-def fetch_json(url: str, timeout: float = 10.0, **retry_options: Any) -> Any:
+def fetch_json(url: str, timeout: float = 10.0, *, attempts: int = 3, wait: float = 1.0,
+               sleep: Callable[[float], None] = time.sleep) -> Any:
     def once() -> Any:
         try:
             with urllib.request.urlopen(url, timeout=timeout) as response:
@@ -254,13 +256,15 @@ def fetch_json(url: str, timeout: float = 10.0, **retry_options: Any) -> Any:
             raise  # 404 や 403 は待っても直らない
         except urllib.error.URLError as exc:  # つながらない（HTTPError はここに来ない）
             raise TransientError(str(exc.reason)) from exc
+        except (http.client.IncompleteRead, json.JSONDecodeError) as exc:  # 本文が途中で切れた
+            raise TransientError(f"応答が不完全です: {type(exc).__name__}") from exc
 
-    return call_with_retry(once, on=(TransientError, TimeoutError), **retry_options)
+    return call_with_retry(once, attempts=attempts, wait=wait, on=(TransientError, TimeoutError), sleep=sleep)
 ```
 
-429（リクエストが多すぎる）と 5xx（サーバ側の失敗）は一時的とみなして再試行し、404 や 403 は待っても直らないのでそのまま例外にします。つながらない失敗（`URLError`）も一時的として扱います。標準ライブラリの `urllib` で足りる小さな取得はこれで済み、込み入ってきたら `requests` のようなライブラリを検討します。
+429（リクエストが多すぎる）と 5xx（サーバ側の失敗）は一時的とみなして再試行し、404 や 403 は待っても直らないのでそのまま例外にします。つながらない失敗（`URLError`）と、本文が途中で切れた失敗（`IncompleteRead` や、JSON として読めない `JSONDecodeError`）も一時的として扱います。再試行の回数と待ちは、`call_with_retry` に渡す引数と同じ名前で受け取ります（`on` は `fetch_json` が決めるので、渡せません）。標準ライブラリの `urllib` で足りる小さな取得はこれで済み、込み入ってきたら `requests` のようなライブラリを検討します。
 
-一方、S3 に置く `upload` は、自前の再試行を重ねていません。boto3 には、再試行の仕組み（`standard` モード）が最初から入っていて、混雑（SlowDown）や 5xx、接続の失敗を、種類に応じて待ちながら繰り返してくれます。ライブラリ側にあるものを二重にかけると、回数が掛け算になるうえ、こちらの `on` が拾う例外の種類とずれて、拾い漏れも生みます。そこで設定で回数だけを決めます（上限の 5 回）。「道具に任せるか、自分で書くか」は、まず道具の文書を読んで決めます。
+一方、S3 に置く `upload` は、自前の再試行を重ねていません。boto3 には、再試行の仕組み（`standard` モード）が最初から入っていて、混雑（SlowDown）や 5xx、接続の失敗を、種類に応じて待ちながら繰り返してくれます。ライブラリ側にあるものを二重にかけると、回数が掛け算になるうえ、こちらの `on` が拾う例外の種類とずれて、拾い漏れも生みます。そこで設定で回数だけを決めます（`total_max_attempts` は最初の 1 回を含む回数で、ここでは 5 回です。`max_attempts` は最初の 1 回を含まない再試行の回数で、同じ数字でも意味が違います。boto3 のドキュメントによる）。「道具に任せるか、自分で書くか」は、まず道具の文書を読んで決めます。
 
 ## logging
 
@@ -406,6 +410,14 @@ class Settings:
         return cls(
             input_path=Path(env["ETL_INPUT"]),
             output_dir=Path(env["ETL_OUTPUT_DIR"]),
+            batch_size=_read(env, "ETL_BATCH_SIZE", "1000", int),
+            max_reject_ratio=_read(env, "ETL_MAX_REJECT_RATIO", "0.05", float),
+            log_level=env.get("LOG_LEVEL", "INFO").upper(),
+            s3_bucket=env.get("S3_BUCKET"),
+            s3_endpoint=env.get("S3_ENDPOINT"),
+            s3_access_key=env.get("S3_ACCESS_KEY"),
+            s3_secret_key=env.get("S3_SECRET_KEY"),
+        )
 ```
 
 ここには 4 つの工夫があります。
@@ -549,7 +561,6 @@ def run(settings: Settings) -> Result:
         tmp_parquet.unlink(missing_ok=True)
         tmp_rejects.unlink(missing_ok=True)
     return result
-
 ```
 
 読み方を順に示します。
@@ -591,7 +602,7 @@ def upload(settings: Settings, path: Path) -> None:
         aws_access_key_id=settings.s3_access_key,
         aws_secret_access_key=settings.s3_secret_key,
         region_name="us-east-1",
-        config=Config(retries={"mode": "standard", "max_attempts": 5}),
+        config=Config(retries={"mode": "standard", "total_max_attempts": 5}),  # 最初の 1 回を含めて 5 回
     )
     client.upload_file(str(path), settings.s3_bucket, f"orders/{path.name}")
     logger.info("アップロード: s3://%s/orders/%s", settings.s3_bucket, path.name)
@@ -697,6 +708,7 @@ def test_status_case_is_normalized():
     ("order_id", "0", "1 以上"),
     ("total_amount", "-500", "0 以上"),
     ("ordered_at", "2026-13-45", "日時として読めません"),
+    ("ordered_at", "0001-01-01 00:00:00", "日時として読めません"),  # UTC に直すと範囲外
     ("status", "returned", "知らない値"),
     ("customer_id", "", "整数ではありません"),
 ])
@@ -705,7 +717,6 @@ def test_parse_order_rejects_bad_values(field, value, reason):
         parse_order({**GOOD_ROW, field: value})
     assert info.value.field == field
     assert reason in info.value.reason
-
 ```
 
 6 通りの悪い入力を、1 つのテスト関数で確かめています。どの組み合わせが落ちたかも、別々に表示されます。
@@ -725,7 +736,6 @@ def test_run_splits_good_and_bad_rows(sample_csv, tmp_path):
     assert len(rejects) == 1 + 4
     assert rejects[0].endswith(",error")
     assert any("total_amount" in line for line in rejects[1:])
-
 ```
 
 このテストは、サンプルの全体を通して、読んだ行、書いた行、除外した行の数と、Parquet の型、除外ファイルの中身を確かめます。冪等と、残骸が無いことも確かめます。結果の比較には、行数だけでなく `table.equals()` で中身全体を使います。
@@ -737,7 +747,6 @@ def test_run_is_idempotent_and_leaves_no_temp_file(sample_csv, tmp_path):
     second = run(settings)
     assert pq.read_table(first.parquet_path).equals(pq.read_table(second.parquet_path))
     assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["orders.parquet", "orders.rejects.csv"]
-
 ```
 
 除外が多すぎるときに Parquet が公開されないことも、テストで固定します。
@@ -750,7 +759,6 @@ def test_too_many_rejects_publishes_no_parquet(sample_csv, tmp_path):
     assert not (out / "orders.parquet").exists()  # 公開しない
     assert (out / "orders.rejects.csv").exists()  # 原因調査のために記録は残す
     assert not list(out.glob("*.tmp"))
-
 ```
 
 再試行のテストには、困りごとがあります。本当に待つと、テストが遅くなります。`call_with_retry` は待ち方を引数（`sleep`）で受け取るので、テストでは待った秒数を記録するだけの関数を渡します。
@@ -768,7 +776,6 @@ def test_retry_succeeds_after_transient_failures():
     assert call_with_retry(flaky, attempts=3, wait=1.0, sleep=waits.append) == "ok"
     assert len(waits) == 2
     assert 0 <= waits[0] <= 1.0 and 0 <= waits[1] <= 2.0  # 上限は倍になり、実際の待ちは乱数
-
 ```
 
 待ちの秒数が、倍になっていく上限の中に収まっていることまで、確かめられます。HTTP の取得は、手元で小さな HTTP サーバを動かして、500 を 2 回返してから成功する状況を作り、再試行を確かめています（`test_fetch_json_retries_server_errors`）。設定のテストも、環境変数に触らずにできます。
@@ -783,7 +790,6 @@ def test_secret_is_not_in_repr():
     settings = Settings.from_env({"ETL_INPUT": "i", "ETL_OUTPUT_DIR": "o", "S3_SECRET_KEY": "dummy-secret-xyz"})
     assert "dummy-secret-xyz" not in repr(settings)
     assert settings.s3_secret_key == "dummy-secret-xyz"
-
 ```
 
 数でない値が来たら変数の名前を含むエラーにすること、秘密が `repr` に出ないことを、テストとして固定しています。誰かが `repr=False` を消したら、このテストが落ちます。

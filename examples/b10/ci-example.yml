@@ -1,0 +1,14 @@
+# GitHub Actions の例 (本書のリポジトリでは examples の下に置いて動かしません)
+name: dbt
+on:
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: pytest examples/b10

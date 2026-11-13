@@ -3,6 +3,8 @@
 確認は「悪い行の数 bad」と「見た行の数 total」を返す SQL 1 本です。bad / total が max_ratio 以下なら合格。
 不合格のとき、severity が "error" なら QualityError で止め、"warn" なら記録して先へ進みます。
 SQL はこのファイルに書いた値だけから作ります (利用者の入力を埋めると SQL インジェクションになります)。
+SQL は DuckDB で動かしています。`count(*) FILTER (WHERE …)` は標準 SQL の書き方で PostgreSQL でも動きますが、
+`INTERVAL 1 DAY` は DuckDB の書き方です (PostgreSQL では `INTERVAL '1 day'`)。
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -24,8 +26,8 @@ CHECKS = [
     Check("orders が空でない", "error",
           "SELECT CASE WHEN count(*) > 0 THEN 0 ELSE 1 END, 1 FROM main.orders"),
     Check("日別売上の日付が NULL でも重複でもない", "error",
-          "SELECT count(*) FILTER (WHERE order_date IS NULL) + count(*) - count(DISTINCT order_date), "
-          "count(*) FROM analytics.fct_daily_sales"),
+          "SELECT count(*) - count(DISTINCT order_date), count(*) FROM analytics.fct_daily_sales"),
+    # count(DISTINCT …) は NULL を数えないので、NULL の行も重複の行も「余分な行」として 1 回ずつ数えられる
     Check("日別売上の合計が raw の明細と一致する", "error",
           """SELECT CASE WHEN
                  (SELECT sum(sales) FROM analytics.fct_daily_sales) =

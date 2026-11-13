@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from examples.b15.view_stream import (  # noqa: E402
-    consume, create_topic, group_assignments, make_stream_events, minute_counts, open_sink,
+    committed_total, consume, create_topic, group_assignments, make_stream_events, minute_counts, open_sink,
     produce_events, read_partition)
 
 
@@ -43,7 +43,8 @@ def main(bootstrap):
     for run in (1, 2):
         n = consume(bootstrap, topic, group, sink, commit=True, expected=len(events), idle_seconds=4)
         rows, = sink.execute("SELECT count(*) FROM events_sink").fetchone()
-        print(f"{run} 回目: 処理 {n} 件 / events_sink {rows} 行")
+        done = committed_total(bootstrap, topic, group)
+        print(f"{run} 回目: 処理 {n} 件 / events_sink {rows} 行 / コミット済みの位置の合計 {done} (送った件数 {len(events)})")
 
     print("--- 分ごとの閲覧数 (events_sink から作る) ---")
     for minute, views in minute_counts(sink):

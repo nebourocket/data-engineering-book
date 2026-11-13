@@ -1,9 +1,0 @@
-version: 2
-
-models:
-  - name: fct_daily_sales
-    columns:
-      - name: order_date
-        data_tests: [unique, not_null]
-      - name: sales
-        data_tests: [not_null]

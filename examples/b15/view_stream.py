@@ -173,3 +173,14 @@ def group_assignments(bootstrap, topic, group_id, timeout=30.0):
     finally:
         for c in consumers:
             c.close()
+
+
+def committed_total(bootstrap, topic, group_id, partitions=3):
+    """グループがコミット済みのオフセットを、全パーティションぶん足して返します (未コミットは 0 として数えます)。
+    トピックに入っている件数と同じなら、読み残し (ラグ) は 0 です。"""
+    consumer = Consumer({"bootstrap.servers": bootstrap, "group.id": group_id, "enable.auto.commit": False})
+    try:
+        offsets = consumer.committed([TopicPartition(topic, p) for p in range(partitions)], timeout=10)
+        return sum(tp.offset for tp in offsets if tp.offset >= 0)  # 未コミットは負の特別な値で返る
+    finally:
+        consumer.close()

@@ -1,44 +1,40 @@
-"""landing (取り込んだ生ファイルの置き場) の 2 つの実装。同じ 3 つの操作 (put・get・exists) を持ちます。
+"""手元のフォルダで動く、S3 のごく小さな代用品。
 
-S3Store は MinIO / S3 に、DirStore は手元のフォルダに置きます。パイプラインはどちらでも同じように動くので、
-サービスが無い環境 (図のビルドなど) では DirStore を使います。
+第9章の landing_files.py は、boto3 の S3 クライアント (put_object・get_object・get_paginator) を受け取って動きます。
+LocalS3 は、その呼び出しだけを手元のフォルダで受け止めます。サービスが無い環境 (図のビルドなど) で、
+同じパイプラインを動かすために使います。MinIO に置く場合は、本物の boto3 のクライアントを渡します。
 """
+import io
 from pathlib import Path
 
 
-class DirStore:
+class LocalS3:
     def __init__(self, root):
         self.root = Path(root)
 
-    def put(self, key, data):
-        path = self.root / key
+    def head_bucket(self, Bucket):
+        return {}
+
+    def create_bucket(self, Bucket):
+        (self.root / Bucket).mkdir(parents=True, exist_ok=True)
+
+    def put_object(self, Bucket, Key, Body):
+        path = self.root / Bucket / Key
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        path.write_bytes(Body)
 
-    def get(self, key):
-        return (self.root / key).read_bytes()
+    def get_object(self, Bucket, Key):
+        data = (self.root / Bucket / Key).read_bytes()
+        return {"Body": io.BytesIO(data)}
 
-    def exists(self, key):
-        return (self.root / key).is_file()
+    def delete_object(self, Bucket, Key):
+        (self.root / Bucket / Key).unlink(missing_ok=True)
 
+    def get_paginator(self, name):
+        assert name == "list_objects_v2"
+        return self
 
-class S3Store:
-    def __init__(self, client, bucket):
-        self.client, self.bucket = client, bucket
-        try:
-            client.head_bucket(Bucket=bucket)
-        except Exception:  # 無ければ作る (学習用の MinIO 向け。本番のバケットはコードで作らず、インフラ側で用意する)
-            client.create_bucket(Bucket=bucket)
-
-    def put(self, key, data):
-        self.client.put_object(Bucket=self.bucket, Key=key, Body=data)
-
-    def get(self, key):
-        return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
-
-    def exists(self, key):
-        try:
-            self.client.head_object(Bucket=self.bucket, Key=key)
-        except self.client.exceptions.ClientError:
-            return False
-        return True
+    def paginate(self, Bucket, Prefix=""):
+        base = self.root / Bucket
+        keys = sorted(p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file())
+        yield {"Contents": [{"Key": k} for k in keys if k.startswith(Prefix)]}

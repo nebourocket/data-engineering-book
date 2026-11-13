@@ -1,0 +1,6 @@
+制約,守ること,ねぼすけ商店での例
+PRIMARY KEY（主キー）,行を 1 つに決める値。重複と NULL を許さない,orders.order_id
+FOREIGN KEY（外部キー）,別の表に存在する値だけを許す,orders.customer_id は customers に存在する顧客だけ
+UNIQUE（一意）,同じ値を 2 回入れさせない（PostgreSQL では NULL を何回でも入れられる）,customers.email
+CHECK,条件を満たす値だけを許す,quantity > 0 や status が決まった 4 つのどれか
+NOT NULL,欠けを許さない,customers.name

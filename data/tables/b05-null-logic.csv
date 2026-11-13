@@ -1,0 +1,12 @@
+式,結果,理由
+NULL = NULL,NULL,どんな値とも等しいか分からない
+NULL <> 1,NULL,比べる相手が分からない
+NULL IS NULL,TRUE,NULL かどうかだけは判定できる
+NULL AND TRUE,NULL,TRUE か FALSE かで結果が変わる
+NULL AND FALSE,FALSE,片方が FALSE なら、もう片方に関係なく FALSE
+NULL OR TRUE,TRUE,片方が TRUE なら、もう片方に関係なく TRUE
+NULL OR FALSE,NULL,もう片方しだいなので分からない
+NOT NULL,NULL,分からないものの否定も分からない
+"2 IN (2, NULL)",TRUE,一致する値があれば TRUE
+"1 IN (2, NULL)",NULL,NULL と等しいかが分からないので、FALSE にならない
+"1 NOT IN (2, NULL)",NULL,上の否定なので、TRUE にならない

@@ -60,14 +60,36 @@ def test_row_groups_skipped_by_zone_maps_without_partition_filter(root):
 
 def test_exercise_queries(root):
     con = demo.open_sales(root)
-    assert con.execute(QUERIES["ex_two_months"]).fetchone() == (258_292_600 + 155_564_450,)
-    assert demo.scan_stats(con, QUERIES["ex_two_months"])["files_read"] == 2
     with_month = demo.scan_stats(con, QUERIES["ex_one_day_with_month"])
     only_day = demo.scan_stats(con, QUERIES["ex_one_day_only"])
     assert with_month["files_read"] == 1 and only_day["files_read"] == 6
     assert only_day["bytes_read"] > 1.2 * with_month["bytes_read"]
-    a = con.execute(QUERIES["ex_one_day_with_month"]).fetchone()
-    assert a == con.execute(QUERIES["ex_one_day_only"]).fetchone()
+    assert con.execute(QUERIES["ex_one_day_with_month"]).fetchone() == (7_121_050,)
+    assert con.execute(QUERIES["ex_one_day_only"]).fetchone() == (7_121_050,)
+
+
+def test_wrapped_partition_column_is_still_pruned_in_duckdb(root):
+    con = demo.open_sales(root)
+    assert demo.scan_stats(con, QUERIES["month_wrapped"])["files_read"] == 1
+    assert con.execute(QUERIES["month_wrapped"]).fetchone() == (268_815_700,)
+
+
+def test_load_into_table(root):
+    con = demo.open_sales(root)
+    con.execute(QUERIES["load_into_table"])
+    assert con.execute("SELECT count(*) FROM sales_loaded").fetchone() == (43_339,)
+
+
+def test_incremental_monthly_update(root):
+    con = demo.open_sales(root)
+    month, revenue, n, avg_line = con.execute(QUERIES["ex_incremental"]).fetchone()
+    assert (month, revenue, n) == ("2026-06", 46_827_300 + 12_000, 7_639 + 3)
+    assert avg_line == pytest.approx(revenue / n)
+
+
+def test_distinct_counts_cannot_be_added_up(root):
+    con = demo.open_sales(root)
+    assert con.execute(QUERIES["ex_distinct"]).fetchone() == (3015, 506)
 
 
 def test_same_answer_with_and_without_partition_filter(root):
@@ -105,37 +127,34 @@ def test_clustering_skips_row_groups(tmp_path):
     assert counts[0] == counts[1]  # 並べ方を変えても答えは同じ
 
 
+def _statements(name):
+    """SQL ファイルを、; で終わる文に分けます（このフォルダの SQL は文の途中に ; を含みません）。"""
+    text = "\n".join(ln for ln in (HERE / name).read_text(encoding="utf-8").splitlines() if not ln.startswith("--"))
+    return [s.strip() for s in text.split(";") if s.strip()]
+
+
 def test_materialized_view_is_a_snapshot(pg_dsn):
     import psycopg
 
-    rows = demo.sales_lines(seeds=range(1, 4))
-    queries = demo.split_queries((HERE / "matview.sql").read_text(encoding="utf-8"))
     with psycopg.connect(pg_dsn, autocommit=True) as con:
-        con.execute("DROP SCHEMA IF EXISTS b11 CASCADE")
-        con.execute("DROP ROLE IF EXISTS b11_analyst")
         try:
-            con.execute("CREATE SCHEMA b11")
-            con.execute("CREATE TABLE b11.sales_lines "
-                        "(order_id int, ordered_at timestamp, quantity int, unit_price int)")
-            with con.cursor() as cur:
-                cur.executemany(
-                    "INSERT INTO b11.sales_lines VALUES (%s, %s, %s, %s)",
-                    [(r["order_id"], r["ordered_at"], r["quantity"], r["unit_price"]) for r in rows])
-            con.execute(queries["create_mv"])
+            for sql in _statements("setup_pg.sql"):
+                con.execute(sql)
+            expected = sum((1 + n % 3) * (500 + (n % 7) * 100) for n in range(1, 3001))
             total = lambda: con.execute("SELECT sum(revenue) FROM b11.daily_revenue").fetchone()[0]  # noqa: E731
-            before = total()
-            assert before == sum(r["quantity"] * r["unit_price"] for r in rows)
-            con.execute("INSERT INTO b11.sales_lines VALUES (999999, '2026-03-01 10:00:00', 1, 1000)")
-            assert total() == before  # 元の表が変わっても、更新するまで見える値は古いまま
-            con.execute(queries["refresh_mv"])
-            assert total() == before + 1000
-            con.execute(queries["grant_mv"])
+            insert, refresh = [s for s in _statements("matview_flow.sql") if not s.startswith("SELECT")]
+            assert total() == expected
+            con.execute(insert)
+            assert total() == expected  # 元の表が変わっても、更新するまで見える値は古いまま
+            con.execute(refresh)
+            assert total() == expected + 1000
+            for sql in _statements("grant_pg.sql")[:3]:
+                con.execute(sql)
             con.execute("SET ROLE b11_analyst")
-            assert total() == before + 1000
+            assert total() == expected + 1000
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 con.execute("SELECT count(*) FROM b11.sales_lines")
-            con.execute("RESET ROLE")
         finally:
             con.execute("RESET ROLE")
-            con.execute("DROP SCHEMA IF EXISTS b11 CASCADE")
-            con.execute("DROP ROLE IF EXISTS b11_analyst")
+            for sql in _statements("cleanup_pg.sql"):
+                con.execute(sql)

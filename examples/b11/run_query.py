@@ -18,4 +18,5 @@ if __name__ == "__main__":
         print(con.execute(sql).fetchall()[0][1])  # 計画は 2 列目の 1 つの文字列に入っている
     else:
         con.sql(sql).show(max_width=200)
-        print(scan_stats(con, sql))  # 開いたファイル数と読んだバイト数
+        if sql.lstrip().upper().startswith("SELECT"):
+            print(scan_stats(con, sql))  # 開いたファイル数と読んだバイト数

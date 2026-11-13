@@ -1,8 +1,9 @@
 """第 11 章: 同じ行を「ばらばら」と「customer_id 順」で Parquet に書き、行グループの読み飛ばしを比べます。
 
-使い方: python examples/b11/clustering_demo.py
+使い方: python examples/b11/clustering_demo.py [--column product_id --value 7]
 行グループ（Parquet が最小値・最大値を持つ単位）を 10,000 行にして、customer_id = 42 の件数を数えます。
 """
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -42,6 +43,10 @@ def row_groups_scanned(path: Path, column: str = "customer_id", value: int = 42)
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="並べ方による行グループの読み飛ばしを比べる")
+    parser.add_argument("--column", default="customer_id", help="絞る列（既定: customer_id）")
+    parser.add_argument("--value", type=int, default=42, help="列の値（既定: 42）")
+    args = parser.parse_args()
     for label, path in write_both(Path("work/cluster")).items():
-        r = row_groups_scanned(path)
+        r = row_groups_scanned(path, args.column, args.value)
         print(f"{label:<14} 行グループ {r['scanned']} / {r['total']}  読んだバイト数 {r['bytes_read']:,}")

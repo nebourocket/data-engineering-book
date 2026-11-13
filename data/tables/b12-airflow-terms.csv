@@ -1,10 +1,12 @@
 用語,意味,この章の例
 DAG,タスクとその依存をまとめた、輪を持たない有向グラフと、その実行の予定,neboske_daily_sales
 タスク,DAG の中の 1 つの処理の単位,wait_for_source・build・report
-Operator,タスクの型（何をするか）。TaskFlow API では関数に @task を付けると作られる,@task／@task.sensor
-DAG Run,DAG の 1 回分の実行。日次なら 1 日に 1 つ,2026-03-05 の区間の実行
-論理日付（logical date）,その実行が処理する区間の始まりの時刻。ds で日付の文字列として取れる,ds = "2026-03-05"
-スケジュール,DAG Run をいつ作るか。区間が終わったあとに作られる,schedule="@daily"
-catchup,過去の取りこぼしの区間を、DAG を有効にしたときにまとめて作るか,catchup=False
-XCom,タスクの間で小さな値を渡す仕組み（Airflow のデータベースに入る）,"build が返す {""day"": ..., ""rows"": ...}"
+Operator,タスクの型（「ファイルを待つ」「SQL を流す」「Python の関数を動かす」など何をするかの部品）。TaskFlow API では関数に @task を付けると Operator が作られる,@task／@task.sensor
+DAG Run,DAG の 1 回分の実行。日次なら 1 日に 1 つ,2026-03-04 の区間の実行
+データの区間（data interval）,その実行が処理する期間。始まりと終わりが data_interval_start と data_interval_end で渡る,2026-03-04 00:00 から 2026-03-05 00:00（日本時間）
+論理日付（logical_date）,実行を区別する日時。3 系の既定のスケジュールでは起動した時刻で、区間とは別のもの,dags test の引数
+スケジュール,DAG Run をいつ作るか。区間のある日次なら、区間が終わったあとに作られる,CronDataIntervalTimetable
+catchup,過去の取りこぼしの区間を、DAG を有効にしたときにまとめて作るか（3 系の既定は False）,catchup=False
+XCom,タスクの間で小さな値を渡す仕組み（Airflow のデータベースに入る）,"build が返す日付と行数の dict"
 センサー,条件（データの到着など）が整うまで待つタスク,wait_for_source
+Connection と Variable,接続情報（ホスト・ユーザーなど）と設定値を、コードの外に置く仕組み。秘密を DAG ファイルに書かない,この章では使わない

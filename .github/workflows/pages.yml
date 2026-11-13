@@ -34,7 +34,7 @@ jobs:
       - run: mkdocs build --strict
 
   airflow:
-    # 12 章の DAG が読み込めることだけを確かめます（DAG がまだ無ければそのまま通ります）。
+    # 12 章の DAG が Airflow 3 で読み込めること、構造（タスク・依存・設定）が本文のとおりであることを確かめます。
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,16 +42,24 @@ jobs:
         with:
           python-version: "3.12"
       - run: >
-          pip install "apache-airflow==2.10.5"
-          --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.5/constraints-3.12.txt"
+          pip install "apache-airflow==3.4.0"
+          --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-3.4.0/constraints-3.12.txt"
       # 12 章の DAG が import する duckdb（requirements.txt と同じ版）。
       - run: pip install "duckdb==2.0.0"
       - run: |
           python - <<'PY'
-          from airflow.models import DagBag
+          from airflow.dag_processing.dagbag import DagBag
 
-          bag = DagBag(dag_folder="examples/b12", include_examples=False)
+          bag = DagBag(dag_folder="examples/b12")
           assert not bag.import_errors, bag.import_errors
+          # safe mode で読み飛ばされていないこと（DAG が 1 個以上あること）
+          assert bag.dags, "DAG が 1 つも読み込まれていません"
+          dag = bag.dags["neboske_daily_sales"]
+          assert sorted(dag.task_dict) == ["build", "report", "wait_for_source"], sorted(dag.task_dict)
+          assert dag.task_dict["build"].upstream_task_ids == {"wait_for_source"}
+          assert dag.task_dict["report"].upstream_task_ids == {"build"}
+          assert dag.catchup is False
+          assert dag.task_dict["build"].retries == 2
           print(f"DAG {len(bag.dags)} 個を読み込みました")
           PY
         env:

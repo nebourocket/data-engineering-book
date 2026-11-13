@@ -5,6 +5,7 @@ docs_dir: book
 
 hooks:
   - hooks/tables.py
+  - hooks/figures.py
 
 theme:
   name: material
@@ -52,7 +53,24 @@ markdown_extensions:
 
 nav:
   - はじめに: index.md
-  - 基礎編: basics/index.md
+  - 基礎編:
+      - basics/index.md
+      - 1. データエンジニアとは: basics/01-what-is-data-engineering.md
+      - 2. データとコンピュータの基礎: basics/02-data-and-computers.md
+      - 3. Linux・シェル・Git: basics/03-linux-shell-git.md
+      - 4. データエンジニアのための Python: basics/04-python.md
+      - 5. SQL 基礎: basics/05-sql-basics.md
+      - 6. SQL 応用: basics/06-sql-advanced.md
+      - 7. RDB・正規化・トランザクション: basics/07-rdb-transactions.md
+      - 8. データモデリング: basics/08-data-modeling.md
+      - 9. データの取り込み: basics/09-ingestion.md
+      - 10. ETL / ELT と dbt: basics/10-etl-elt-dbt.md
+      - 11. データウェアハウス: basics/11-data-warehouse.md
+      - 12. オーケストレーション: basics/12-orchestration.md
+      - 13. データ品質とテスト: basics/13-data-quality.md
+      - 14. クラウド・Docker・オブジェクトストレージ: basics/14-cloud-docker-storage.md
+      - 15. ストリーミング入門: basics/15-streaming-intro.md
+      - 16. 実践プロジェクトとキャリア: basics/16-project-and-career.md
   - 応用編:
       - advanced/index.md
       - 1. 分散処理の内側: advanced/01-distributed-processing.md

@@ -53,6 +53,16 @@ markdown_extensions:
 
 nav:
   - はじめに: index.md
+  - 準備編:
+      - start/index.md
+      - 1. パソコンとターミナルの基本: start/s01-computer-and-terminal.md
+      - 2. Python 入門 1 (値・変数・計算): start/s02-python-1.md
+      - 3. Python 入門 2 (条件・繰り返し・リスト・辞書): start/s03-python-2.md
+      - 4. Python 入門 3 (関数・ファイル・エラー・パッケージ): start/s04-python-3.md
+      - 5. SQL 入門 1 (表と SELECT): start/s05-sql-1.md
+      - 6. SQL 入門 2 (集計と JOIN): start/s06-sql-2.md
+      - 7. データの形 (表・CSV・JSON): start/s07-data-shapes.md
+      - 8. つまずいたときの進み方: start/s08-when-stuck.md
   - 基礎編:
       - basics/index.md
       - 1. データエンジニアとは: basics/01-what-is-data-engineering.md

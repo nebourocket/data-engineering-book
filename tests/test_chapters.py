@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from hooks.chapter_check import BASICS_RANGE, check_chapter, find_hand_tables, is_draft, load_glossary
+from hooks.chapter_check import BASICS_RANGE, START_RANGE, check_chapter, find_hand_tables, is_draft, load_glossary
 
 ROOT = Path(__file__).resolve().parent.parent
 CHAPTER_SLUGS = [
@@ -16,6 +16,10 @@ CHAPTER_SLUGS = [
     "08-data-modeling", "09-ingestion", "10-etl-elt-dbt", "11-data-warehouse",
     "12-orchestration", "13-data-quality", "14-cloud-docker-storage",
     "15-streaming-intro", "16-project-and-career",
+]
+START_SLUGS = [
+    "s01-computer-and-terminal", "s02-python-1", "s03-python-2", "s04-python-3",
+    "s05-sql-1", "s06-sql-2", "s07-data-shapes", "s08-when-stuck",
 ]
 
 
@@ -50,6 +54,36 @@ def run(env, text, **kw):
     return check_chapter(
         path, examples_dir=env / "examples", tables_dir=env / "data" / "tables",
         glossary=load_glossary(env / "data" / "glossary.csv"), length_range=BASICS_RANGE, prefix="b", **kw)
+
+
+def run_start(env, text, name="s01-test.md"):
+    """準備編の章（s01-…）を、準備編の設定で検査します。"""
+    (env / "examples" / "s01").mkdir(exist_ok=True)
+    path = env / "book" / "basics" / name
+    path.write_text(text, encoding="utf-8")
+    return check_chapter(
+        path, examples_dir=env / "examples", tables_dir=env / "data" / "tables",
+        glossary=[], length_range=START_RANGE, prefix="s", min_exercises=5)
+
+
+def test_start_chapter_passes(env):
+    assert run_start(env, make_chapter(filler=9000, exercises=5)) == []
+
+
+def test_start_needs_five_exercises(env):
+    assert any("練習問題" in e for e in run_start(env, make_chapter(filler=9000, exercises=4)))
+
+
+def test_start_range(env):
+    assert any("文字" in e for e in run_start(env, make_chapter(filler=7500, exercises=5)))
+    assert any("文字" in e for e in run_start(env, make_chapter(filler=17000, exercises=5)))
+
+
+def test_start_code_uses_s_examples(env):
+    block = "```python\nprint( 'hi' )\n```\n\n"
+    assert any("examples/s01" in e for e in run_start(env, make_chapter(filler=9000, exercises=5, extra=block)))
+    (env / "examples" / "s01" / "hello.py").write_text("print( 'hi' )\n", encoding="utf-8")
+    assert run_start(env, make_chapter(filler=9000, exercises=5, extra=block)) == []
 
 
 def test_valid_chapter_passes(env):
@@ -211,6 +245,7 @@ def test_find_hand_tables_ignores_code(tmp_path):
 # --- 実際の本 ---------------------------------------------------------------
 
 BASICS = ROOT / "book" / "basics"
+START = ROOT / "book" / "start"
 
 
 def test_all_chapter_files_exist():
@@ -224,6 +259,12 @@ def test_nav_and_index_list_all_chapters():
     for slug in CHAPTER_SLUGS:
         assert f"basics/{slug}.md" in nav, slug
         assert f"{slug}.md" in index, slug
+    start_index = (START / "index.md").read_text(encoding="utf-8")
+    assert "start/index.md" in nav
+    for slug in START_SLUGS:
+        assert (START / f"{slug}.md").exists(), slug
+        assert f"start/{slug}.md" in nav, slug
+        assert f"{slug}.md" in start_index, slug
 
 
 @pytest.mark.parametrize("slug", CHAPTER_SLUGS)
@@ -231,6 +272,15 @@ def test_basics_chapter(slug):
     errors = check_chapter(
         BASICS / f"{slug}.md", examples_dir=ROOT / "examples", tables_dir=ROOT / "data" / "tables",
         glossary=load_glossary(ROOT / "data" / "glossary.csv"), length_range=BASICS_RANGE, prefix="b")
+    assert errors == []
+
+
+@pytest.mark.parametrize("slug", START_SLUGS)
+def test_start_chapter(slug):
+    errors = check_chapter(
+        START / f"{slug}.md", examples_dir=ROOT / "examples", tables_dir=ROOT / "data" / "tables",
+        glossary=load_glossary(ROOT / "data" / "glossary.csv"), length_range=START_RANGE, prefix="s",
+        min_exercises=5)
     assert errors == []
 
 
@@ -246,7 +296,7 @@ def test_glossary_columns():
 
 @pytest.mark.skipif(os.environ.get("DE_BOOK_FINAL") != "1", reason="DE_BOOK_FINAL=1 のときだけ検査します")
 def test_no_drafts_left():
-    drafts = [p.name for p in BASICS.glob("[0-9][0-9]-*.md")
+    drafts = [p.name for p in [*BASICS.glob("[0-9][0-9]-*.md"), *START.glob("s[0-9][0-9]-*.md")]
               if is_draft(p.read_text(encoding="utf-8"))]
     assert drafts == []
 

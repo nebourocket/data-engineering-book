@@ -1,7 +1,7 @@
 """章の検査（型・長さ・表・コードの一致・表記・draft）。
 
 MkDocs には依存しません（応用編の非公開リポジトリからも import します）。
-長さの範囲と examples の接頭辞（基礎編は b、応用編は a）は引数で変えられます。
+長さの範囲と examples の接頭辞（準備編は s、基礎編は b、応用編は a）は引数で変えられます。
 """
 import ast
 import csv
@@ -13,10 +13,11 @@ from pathlib import Path
 
 BASICS_RANGE = (7000, 20000)
 ADVANCED_RANGE = (10000, 20000)
+START_RANGE = (8000, 16000)
 
 FIRST_H2 = "この章でできるようになること"
 LAST_H2 = ["よくある失敗", "まとめ", "練習問題", "参考文献"]
-MIN_EXERCISES = 3
+MIN_EXERCISES = 3  # 基礎編・応用編。準備編は呼び出し側が min_exercises=5 を渡す
 # 検査するコードブロックの言語（別名は ALIASES で正規化します）。
 CHECKED_LANGS = {"python", "sql", "bash", "yaml", "toml", "dockerfile", "ini", "json"}
 ALIASES = {
@@ -152,7 +153,8 @@ def _norm(s: str) -> str:
     return " ".join(s.split())
 
 
-def check_chapter(path, *, examples_dir, tables_dir, glossary, length_range, prefix="b") -> list[str]:
+def check_chapter(path, *, examples_dir, tables_dir, glossary, length_range, prefix="b",
+                  min_exercises=MIN_EXERCISES) -> list[str]:
     """章 1 本を検査し、問題の一覧（空なら合格）を返します。"""
     path = Path(path)
     text = path.read_text(encoding="utf-8")
@@ -188,11 +190,11 @@ def check_chapter(path, *, examples_dir, tables_dir, glossary, length_range, pre
     # 練習問題
     m = re.search(r"^## 練習問題\s*$(.*?)(?=^## |\Z)", prose, re.M | re.S)
     count = len(re.findall(r'^\s*\?\?\?\+? note "解答例"', m.group(1), re.M)) if m else 0
-    if count < MIN_EXERCISES:
-        errors.append(f"練習問題: 解答例（??? note \"解答例\"）が {count} 個です（{MIN_EXERCISES} 個以上）")
+    if count < min_exercises:
+        errors.append(f"練習問題: 解答例（??? note \"解答例\"）が {count} 個です（{min_exercises} 個以上）")
 
     # コードの一致
-    num = re.match(r"(\d+)-", path.name)
+    num = re.match(r"s?(\d+)-", path.name)
     _, blocks, fence_errors = parse_fences(body)
     errors += fence_errors
     if num:

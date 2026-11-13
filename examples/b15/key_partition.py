@@ -16,7 +16,7 @@ def key_to_partition(key, partitions=3):
 def write_table(path, keys=("91", "166", "200", "250"), partitions=3):
     """data/tables/b15-key-partition.csv を書きます。本文の表はこのファイルから作ります。"""
     with open(path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, lineterminator="\n")
         writer.writerow(["キー (顧客番号)", "CRC32 (10 進数)", f"{partitions} で割った余り (行き先のパーティション)"])
         for key in keys:
             writer.writerow([key, zlib.crc32(key.encode("utf-8")), key_to_partition(key, partitions)])

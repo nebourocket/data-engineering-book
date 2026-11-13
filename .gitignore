@@ -9,3 +9,6 @@ book/assets/figures/
 shop.duckdb
 *.duckdb.wal
 work/
+practice.duckdb
+practice.sql
+try.sql

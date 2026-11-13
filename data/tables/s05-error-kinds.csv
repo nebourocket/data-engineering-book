@@ -1,0 +1,6 @@
+エラーの名前,意味,まず見る所
+Parser Error,SQL の文の形が崩れている,表示された位置の記号 (^^^^^) とその直前
+Binder Error,文の形は正しいが、列などの名前が見つからない,Candidate bindings (候補) と綴り
+Catalog Error,表の名前が見つからない・すでにある,Did you mean (もしかして) の行
+Conversion Error,値を列の型に直せない,示された値と列の型
+Constraint Error,主キーなどの決まりに反している,同じキーの値がすでに入っていないか

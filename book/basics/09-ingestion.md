@@ -70,7 +70,7 @@ ON CONFLICT (order_id) DO UPDATE SET
 
 `excluded` は「入れようとした行」を指す名前で、`ON CONFLICT` の中でだけ使えます。`order_id` が既にあれば 4 つの列を新しい値で上書きし、無ければ挿入します。同じ `batch` を 2 回流しても、結果は同じです。
 
-もう 1 つの書き方が、標準 SQL の `MERGE` です。PostgreSQL は 15 以降、DuckDB でも使えます。書き方は製品で少しずつ違い、下は DuckDB の例です (`INSERT *` は同名の列をすべて使う DuckDB の略記で、PostgreSQL では列を書き並べます)。
+もう 1 つの書き方が、標準 SQL の `MERGE` です。PostgreSQL は 15 以降、DuckDB は 1.4 以降で使えます (出典は参考文献)。書き方は製品で少しずつ違い、下は DuckDB の例です (`INSERT *` は同名の列をすべて使う DuckDB の略記で、PostgreSQL では列を書き並べます)。
 
 ```sql
 MERGE INTO orders AS t
@@ -84,11 +84,32 @@ WHEN MATCHED THEN UPDATE SET
 WHEN NOT MATCHED THEN INSERT *;
 ```
 
-どちらも、**1 回の文の中に同じキーの行が 2 つあると困る**ことに注意してください。PostgreSQL の `ON CONFLICT DO UPDATE` は、1 つの行を 1 回の文で 2 度は変更できないので、同じキーが 2 行あるバッチをそのまま流すとエラーになります (PostgreSQL の INSERT の文書)。バッチの中に同じキーが複数あるときは、先に「最新の 1 行」に絞ってから入れます。
+どちらも、**1 回の文の中に同じキーの行が 2 つあると困る**ことに注意してください。PostgreSQL の `ON CONFLICT DO UPDATE` は、1 つの行を 1 回の文で 2 度は変更できないので、同じキーが 2 行あるバッチをそのまま流すとエラーになります (PostgreSQL の INSERT の文書)。バッチの中に同じキーが複数あるときは、先に「最新の 1 行」に絞ってから入れます。第6章の `row_number` を使います。
+
+```sql
+SELECT order_id, customer_id, status, amount, updated_at FROM (
+    SELECT *, row_number() OVER (PARTITION BY order_id ORDER BY updated_at DESC) AS rn
+    FROM batch) AS t
+WHERE rn = 1
+```
+
+`updated_at` まで同じ行が残るなら、どちらが残るかが決まりません。連番などの列を `ORDER BY` に足して、順序を一意にします。
 
 2 つ目は、**パーティションの置き換え**です。パーティションは、データを日付などの単位で区切った 1 つの塊のことです。「その日の分を消してから入れ直す」と決めれば、何度流しても、その日の分は最後に入れた中身と同じになります。ログのように主キーを持たないデータに向きます。消す処理と入れる処理は、必ず 1 つのトランザクションに入れます。消した直後に失敗すると、その日の分が空になるからです。コードは後のファイルの節にあります。
 
-3 つ目は、**全件の置き換え**です。`CREATE OR REPLACE TABLE ... AS SELECT ...` のように、毎回表ごと作り直します。最も単純な方法です。
+3 つ目は、**全件の置き換え**です。毎回表ごと作り直す、最も単純な方法です。
+
+```python
+def full_load(duck, pg_dsn):
+    """全件を読み、表ごと作り直します (小さい表向け)。読んだ件数を返します。"""
+    rows = extract(pg_dsn, datetime(1970, 1, 1, tzinfo=timezone.utc), timedelta(0))
+    duck.register("batch", to_arrow(rows))
+    duck.execute("CREATE OR REPLACE TABLE orders_full AS SELECT * FROM batch")
+    duck.unregister("batch")
+    return len(rows)
+```
+
+行をまとめて入れる点に注意してください。数千件を 1 行ずつ `INSERT` (Python では `executemany` など) すると、DuckDB のような分析向けの DBMS では特に遅くなります。ここでは Arrow の表にして 1 回で渡しています。大きなファイルなら `COPY` (PostgreSQL・DuckDB どちらにもあります) を使います。
 
 冪等でない取り込みの典型は、ただの `INSERT` です。再実行した分が、そのまま二重に入ります。「最後まで成功したら印を付ける」やり方も、印を付ける直前に落ちれば、次の実行で同じものを読み直します。**落ちる場所はどこでもあり得る**と考え、読み直しが起きても結果が変わらないように書きます。
 
@@ -116,9 +137,9 @@ def do_GET(self):
 
 認証は、`Authorization: Bearer <トークン>` というヘッダーで行う方式が一般的です。トークンは、パスワードの代わりに発行される長い文字列です。コードやリポジトリに書かず、環境変数などで渡します (第3章)。URL の末尾 (`?api_key=...`) に付ける API もありますが、URL はログに残りやすいので、ヘッダーで渡せるならヘッダーにします。偽 API は、トークンが違うと 401 を返します。
 
-ページングには 2 つの方式があります。**オフセット方式** (`?offset=1000&limit=500`) は「先頭から 1,000 件目以降」と指定します。読んでいる間に新しい行が先頭側に挿入されると、1 行ずれて、同じ行を 2 回受け取るか、1 行飛ばされます。大きな offset は、サーバー側でも遅くなりがちです。**カーソル方式**は「この ID より後」(`?after_id=500`) や、サーバーが渡す不透明な印を使うので、読んでいる最中に行が増えてもずれません。偽 API は、前者の欠点を避けるカーソル方式にしています。応答の `next_after_id` が空 (`None`) になったら最後のページです。
+ページングには 2 つの方式があります。**オフセット方式** (`?offset=1000&limit=500`) は「先頭から 1,000 件目以降」と指定します。読んでいる間に、読み終えた範囲へ行が挿入されると同じ行を 2 回受け取り、削除されると 1 行飛ばされます。大きな offset は、サーバー側でも遅くなりがちです。**カーソル方式**は「この ID より後」(`?after_id=500`) や、サーバーが渡す不透明な印を使うので、読んでいる最中に行が増えてもずれません。偽 API は、前者の欠点を避けるカーソル方式にしています。応答の `next_after_id` が空 (`None`) になったら最後のページです。
 
-429 (Too Many Requests) は、呼びすぎたときの応答で、RFC 6585 で定義されています。`Retry-After` ヘッダーは「何秒後にもう一度どうぞ」を知らせるもので、RFC 9110 では秒数か日時の 2 通りの書き方が認められています。次のクライアントは、秒数の形だけを扱います。日時の形を返す API を相手にするときは、そのぶんの解析を足す必要があります。
+429 (Too Many Requests) は、呼びすぎたときの応答で、RFC 6585 の 4 節で定義されています。同じ節に、応答に `Retry-After` を含めてよい (必須ではない) と書かれています。`Retry-After` は「何秒後にもう一度どうぞ」を知らせるヘッダーで、書式は RFC 9110 の 10.2.3 節にあり、秒数か日時の 2 通りが認められています。次のクライアントは、秒数の形だけを扱います。日時の形を返す API を相手にするときは、そのぶんの解析を足す必要があります。
 
 ```python
 def get_json(url, token, params=None, sleep=time.sleep, max_attempts=5):
@@ -127,6 +148,8 @@ def get_json(url, token, params=None, sleep=time.sleep, max_attempts=5):
         response = requests.get(url, params=params, headers={"Authorization": f"Bearer {token}"}, timeout=10)
         if response.status_code == 429:
             # Retry-After が無い API もあるので、無ければ 1, 2, 4 ... 秒の指数バックオフにする
+            if attempt == max_attempts:
+                break  # 最後の 429 のあとは待たずに諦める
             wait = float(response.headers.get("Retry-After", 2 ** (attempt - 1)))
             sleep(wait)
             continue
@@ -166,7 +189,9 @@ def fetch_all(base_url, token, limit=500, sleep=time.sleep):
 landing/<ソース>/dt=<受信日>/part-0000.jsonl.gz
 ```
 
-`dt` は「データが届いた日」で、データ中の時刻ではありません。遅れて届いたデータも、届いた日のパーティションに入ります。理由は次の節で説明します。キー名は日付だけで決まり、同じ日を書き直すと上書きされます。時刻や乱数を名前に入れると、再実行のたびにファイルが増えて、冪等になりません。
+`dt` は「データが届いた日」で、データ中の時刻ではありません。遅れて届いたデータも、届いた日のパーティションに入ります。理由は次の節で説明します。日付は日本時間 (JST) で切ります。第2章の「保存は UTC でタイムゾーン付き」という決まりは、時刻の列の話で、置き場所の日付はチームが読みやすい日付に決めます。どちらを使うか、パイプラインの全員が同じにそろえていることが大事です。
+
+キー名は日付と番号だけで決まります。**1 回の置き込みは、その日の全体を `part-0000` に書き**、同じ番号で書き直すと上書きされます。そのため、同じ日の分を 2 回に分けて同じ `part-0000` に置くと、前の分が消えます。同じ日に後から届いた分は `part-0001` のように番号を足して置き、前の分を消しません。読む側は、パーティション内の `part-` をすべて読みます。時刻や乱数を名前に入れると、再実行のたびにファイルが増えて、冪等になりません。
 
 **書きかけを読まない**ことが、ファイル取り込みで最も大事な約束です。オブジェクトストレージには、ファイルの名前を後から変える操作がありません (コピーして消す操作になります)。そこで、全部置き終えたあとに `_SUCCESS` という空のファイルを置く約束にし、読む側は、それがあるパーティションだけを読みます。
 
@@ -175,14 +200,14 @@ landing/<ソース>/dt=<受信日>/part-0000.jsonl.gz
 次のコードが、置く側と見つける側です。
 
 ```python
-def land_events(s3, bucket, events):
-    """events を受信日ごとにまとめて、gzip 圧縮の JSON Lines で置きます。置いた日付の一覧を返します。"""
+def land_events(s3, bucket, events, part=0):
+    """events を受信日ごとにまとめて、gzip 圧縮の JSON Lines (part 番号つき) で置きます。置いた日付の一覧を返します。"""
     by_day = {}
     for event in events:
         by_day.setdefault(event["received_at"][:10], []).append(event)
     for dt, rows in by_day.items():
         body = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows).encode("utf-8")
-        s3.put_object(Bucket=bucket, Key=partition_key("events", dt), Body=gzip.compress(body))
+        s3.put_object(Bucket=bucket, Key=partition_key("events", dt, part), Body=gzip.compress(body))
         # 全部置き終えた印。読む側は、この印があるパーティションだけを読む
         s3.put_object(Bucket=bucket, Key=f"landing/events/dt={dt}/_SUCCESS", Body=b"")
     return sorted(by_day)
@@ -199,7 +224,18 @@ def list_ready_partitions(s3, bucket, source, after_dt=""):
     return sorted(dt for dt in found if dt > after_dt)
 ```
 
-S3 の一覧 API (`ListObjectsV2`) は、1 回に最大 1,000 件のキーしか返しません。パーティションが 1,000 を超える日が来ると、ページ送りをしていない一覧は、黙って途中で切れます。`get_paginator` は、そのページ送りを自動で行います。`after_dt` は「どこまで取り込んだか」の印で、前回より新しい日だけを取り込むために使います。印をどこに持つかは、DB の節で扱います。
+S3 の一覧 API (`ListObjectsV2`) は、1 回に最大 1,000 件のキーしか返しません。パーティションが 1,000 を超える日が来ると、ページ送りをしていない一覧は、黙って途中で切れます。`get_paginator` は、そのページ送りを自動で行います。`after_dt` は「どこまで取り込んだか」の印で、前回より新しい日だけを取り込むために使います。読み取りと取り込みのつなぎは、次の関数です。`_SUCCESS` が無い (置いている途中の) パーティションは、`list_ready_partitions` の結果に出ないので、読まれません (`test_partition_without_success_marker_is_not_read`)。
+
+```python
+def load_new_partitions(duck, s3, bucket, after_dt=""):
+    """置き終わった (_SUCCESS のある) 新しいパーティションを順に取り込み、取り込んだ日付を返します。"""
+    days = list_ready_partitions(s3, bucket, "events", after_dt)
+    for dt in days:
+        load_partition(duck, s3, bucket, dt)
+    return days
+```
+
+印をどこに持つかは、DB の節のウォーターマークと同じ考え方で、取り込み先と同じ場所に置きます。
 
 **圧縮と形式**にも判断があります。JSON Lines や CSV は gzip で圧縮すると小さく済みますが、gzip は途中から読めず、大きなファイルを多数の計算機で分けて読む場面では不利です。分析用には、列ごとに圧縮される Parquet (第2章) が向きます。landing は「元の形のまま、圧縮だけ」にして、Parquet への変換はその先の層の仕事にします。取引先の CSV が Shift_JIS や BOM 付き UTF-8 なら、文字コードを読むときに明示します (第2章)。
 
@@ -225,10 +261,7 @@ def load(duck, pg_dsn, lookback=timedelta(0)):
     rows = extract(pg_dsn, read_watermark(duck), lookback)
     if not rows:
         return 0
-    batch = pa.table({
-        "order_id": [r[0] for r in rows], "customer_id": [r[1] for r in rows],
-        "status": [r[2] for r in rows], "amount": [r[3] for r in rows],
-        "updated_at": pa.array([r[4] for r in rows], pa.timestamp("us", tz="UTC"))})
+    batch = to_arrow(rows)
     duck.execute("BEGIN")
     try:
         duck.register("batch", batch)
@@ -258,7 +291,7 @@ def load(duck, pg_dsn, lookback=timedelta(0)):
 全件を読み直した後の行数: 3001 件読んで 3001 行
 ```
 
-1 回目は全件、2 回目は変化が無いので 0 件です。変更後は更新 2 件と追加 1 件の計 3 件だけを取り込みます。最後の行は、`lookback` を 400 日にして全件を読み直した結果で、3,001 件を読んでも行数は 3,001 のままです。upsert が冪等なので、読み直しても増えません。この性質があるから、次の落とし穴に「少し戻って読み直す」対策が打てます。
+1 回目は全件、2 回目は変化が無いので 0 件です。変更後は更新 2 件と追加 1 件の計 3 件だけを取り込みます。最後の行は、ウォーターマークの行を消して (値が 1970 年に戻り、全件が対象になります) 読み直した結果で、3,001 件を読んでも行数は 3,001 のままです。upsert が冪等なので、読み直しても増えません。この性質があるから、次の落とし穴に「少し戻って読み直す」対策が打てます。
 
 差分取り込みの落とし穴を表にまとめます。どれも、実際に起きて、取りこぼしに気づくのが遅れるものです。
 
@@ -275,8 +308,10 @@ def sync_deletes(duck, pg_dsn):
         source_ids = {r[0] for r in con.execute("SELECT order_id FROM b09.orders")}
     target_ids = {r[0] for r in duck.execute("SELECT order_id FROM orders").fetchall()}
     gone = sorted(target_ids - source_ids)
-    for order_id in gone:
-        duck.execute("DELETE FROM orders WHERE order_id = ?", [order_id])
+    if gone:
+        duck.execute("BEGIN")
+        duck.execute("DELETE FROM orders WHERE order_id = ANY(?)", [gone])
+        duck.execute("COMMIT")
     return len(gone)
 ```
 
@@ -319,18 +354,21 @@ SELECT max(date_diff('day', CAST(event_time AS DATE), CAST(dt AS DATE))) FROM ev
 - **型の変更**: 数値の列に文字列が入り、取り込みか集計で落ちる。
 - **意味の変更**: 列名も型も同じで、中身の意味だけが変わる (たとえば金額が税込みに変わる)。エラーが出ないので、最も危ない。
 
-すべてを防ぐ方法はありません。段階を分けて、被害を小さくします。第一に、landing には元の形のまま置きます。列が増えても減っても、ファイルは壊れません。第二に、raw に表として取り込むとき、**想定した列**と**想定外の列**に分けます。想定外の列は捨てずに、JSON の文字列として 1 つの列 (`extra`) に残します。
+すべてを防ぐ方法はありません。段階を分けて、被害を小さくします。第一に、landing には元の形のまま置きます。列が増えても減っても、ファイルは壊れません。第二に、raw に表として取り込むとき (時刻の列は、元の文字列のまま `VARCHAR` で持ち、型の解釈は staging に任せます)、**想定した列**と**想定外の列**に分けます。想定外の列は捨てずに、JSON の文字列として 1 つの列 (`extra`) に残します。
 
 ```python
 def split_known(record, known=KNOWN_COLUMNS):
     """想定の列と、想定外の列 (extra) に分けます。想定外の列があっても止まらず、失いもしません。"""
-    return ({c: record.get(c) for c in known},
+    missing = [c for c in known if c not in record]
+    if missing:  # 想定した列が消えたら、NULL で埋めずに止めて知らせる
+        raise ValueError(f"想定した列がありません: {missing}")
+    return ({c: record[c] for c in known},
             {k: v for k, v in record.items() if k not in known})
 ```
 
-たとえば `coupon_code` という列が突然増えても、取り込みは止まらず、値は `extra` に `{"coupon_code": "SPRING"}` として残ります (`test_new_column_does_not_break_ingestion`)。第三に、**変化に気づく仕組み**を持ちます。`extra` が空でない行の数を毎日数えて、増えたら通知する、といったものです。想定した列が消えたり型が変わったりした場合は、黙って `NULL` に埋めずに、止めて知らせるほうが安全です。止まる損失より、間違った数字が使われ続ける損失のほうが、大きいことが多いからです。
+たとえば `coupon_code` という列が突然増えても、取り込みは止まらず、値は `extra` に `{"coupon_code": "SPRING"}` として残ります (`test_new_column_does_not_break_ingestion`)。第三に、**変化に気づく仕組み**を持ちます。`extra` が空でない行の数を毎日数えて、増えたら通知する、といったものです。想定した列が消えた場合は、黙って `NULL` に埋めずに、止めて知らせるほうが安全です。`split_known` は、想定した列が 1 つでも無ければ `ValueError` を出し、取り込みを止めます (`test_missing_known_column_stops_ingestion`)。止まる損失より、間違った数字が使われ続ける損失のほうが、大きいことが多いからです。
 
-取り込みの SQL で `SELECT *` を使うと、元の列の増減が下流にそのまま漏れます。取り込み先の列は、明示的に決めておきます。スキーマの約束を元と書面で取り交わす考え方 (データ契約) は、応用編の第7章で扱います。
+元の表に対して `SELECT *` で読むと、元の列の増減が下流にそのまま漏れます。取り込み先の列は、明示的に決めておきます。スキーマの約束を元と書面で取り交わす考え方 (データ契約) は、応用編の第7章で扱います。
 
 ## 生データを残す: landing と raw
 
@@ -344,14 +382,16 @@ def split_known(record, known=KNOWN_COLUMNS):
 ```python
 def load_partition(duck, s3, bucket, dt):
     """1 つのパーティションを置き換えます (消してから入れる。1 トランザクション)。件数を返します。"""
-    key = partition_key("events", dt)
-    text = gzip.decompress(s3.get_object(Bucket=bucket, Key=key)["Body"].read()).decode("utf-8")
+    keys = part_keys(s3, bucket, dt)
+    texts = [(key, gzip.decompress(s3.get_object(Bucket=bucket, Key=key)["Body"].read()).decode("utf-8"))
+             for key in keys]
     now = datetime.now(timezone.utc)
     rows = []
-    for line in text.splitlines():
-        known, extra = split_known(json.loads(line))
-        rows.append({**known, "extra": json.dumps(extra, ensure_ascii=False) if extra else None,
-                     "dt": dt, "source_file": key, "ingested_at": now})
+    for key, text in texts:
+        for line in text.splitlines():
+            known, extra = split_known(json.loads(line))
+            rows.append({**known, "extra": json.dumps(extra, ensure_ascii=False) if extra else None,
+                         "dt": dt, "source_file": key, "ingested_at": now})
     batch = pa.Table.from_pylist(rows)
     duck.execute("BEGIN")
     try:
@@ -378,7 +418,7 @@ def load_partition(duck, s3, bucket, dt):
 
 ログベースが強いのは、削除と、1 回ごとの更新が見えることです。注文の状態が `placed` → `shipped` → `delivered` と変わった履歴を、順に受け取れます。クエリベースは、取り込みの間隔の中での途中の状態を見落とします。
 
-代わりに運用が重くなります。PostgreSQL のレプリケーションスロットは、受け取り側が変更を読み終えるまで、記録を消さずに取っておきます。受け取り側が止まったままだと、記録がたまって、元のデータベースのディスクを圧迫します (PostgreSQL の文書にも、極端な場合はデータベースが止まりうると書かれています)。専用の権限と設定も要り、最初は全件の取り込みも別に必要です。
+代わりに運用が重くなります。PostgreSQL のレプリケーションスロットは、受け取り側が読み終えるまで、記録 (WAL) を消さずに取っておきます。受け取り側が止まったままだと、記録がたまり続けてディスクを圧迫します。設定 `max_slot_wal_keep_size` の既定は -1 で、スロットが保持する WAL の量に上限がありません。上限を決めると今度は、遅れた受け取り側が続きを読めなくなるので、容量の監視と上限のどちらを取るか、運用で決めます。専用の権限と設定も要り、最初は全件の取り込みも別に必要です。
 
 ログベースの CDC を担う道具の代表が Debezium で、取り出した変更を Kafka (第15章) に流します。この本では名前の紹介までにして、仕組みと運用は応用編の第5章に譲ります。**削除の取りこぼしが業務に響き、元の負荷も無視できない**ときに検討する、と覚えておけば十分です。
 
@@ -407,7 +447,7 @@ def load_partition(duck, s3, bucket, dt):
 問 1. 差分取り込みで、条件を `updated_at > ウォーターマーク` にしています。ある行の `updated_at` がウォーターマークとちょうど同じ時刻で、その行が 1 回目の取り込みのあとにコミットされたとします。この行は、次の取り込みで拾われますか。拾うには、どう変えますか。
 
 ??? note "解答例"
-    拾われません。`>` は「ウォーターマークより後」なので、同じ時刻の行は条件に当たらず、永久に見落とします。条件を `>=` に変える方法もありますが、すると毎回、ウォーターマークと同じ時刻の行を読み直します。より一般的なのは、本文のとおり `lookback` で少し手前から読み直し、upsert の冪等性で重複を受け止める方法です。この方法は、同時刻の行だけでなく、コミット順で遅れて見える行もまとめて拾えます。
+    拾われません。`>` は「ウォーターマークより後」なので、同じ時刻の行は条件に当たらず、永久に見落とします。条件を `>=` に変える方法もありますが、すると毎回、ウォーターマークと同じ時刻の行を読み直します。テスト `test_row_with_same_timestamp_as_watermark` が、`lookback` なしでは 0 件、`lookback` ありでは拾えることを確かめています。より一般的なのは、本文のとおり `lookback` で少し手前から読み直し、upsert の冪等性で重複を受け止める方法です。この方法は、同時刻の行だけでなく、コミット順で遅れて見える行もまとめて拾えます。
 
 問 2. 行動ログ (`events`) を、`received_at` ではなく `event_time` の日付でパーティションに切ると、どんな不都合がありますか。本章のデータで、影響を受ける行数を SQL で求めてください (`events_raw` に全日付を取り込んだあとで流します)。
 
@@ -427,10 +467,12 @@ def load_partition(duck, s3, bucket, dt):
 ## 参考文献
 
 - Joe Reis, Matt Housley, *Fundamentals of Data Engineering*, O'Reilly, 2022, Chapter 7 “Ingestion”
-- RFC 6585, “Additional HTTP Status Codes”（429 Too Many Requests）, <https://www.rfc-editor.org/rfc/rfc6585>
+- RFC 6585, “Additional HTTP Status Codes”, 4 節（429 Too Many Requests）, <https://www.rfc-editor.org/rfc/rfc6585>
 - RFC 9110, “HTTP Semantics”, 10.2.3 Retry-After, <https://www.rfc-editor.org/rfc/rfc9110>
 - PostgreSQL Documentation, “INSERT”, <https://www.postgresql.org/docs/current/sql-insert.html>
-- PostgreSQL Documentation, “MERGE”, <https://www.postgresql.org/docs/current/sql-merge.html>
+- PostgreSQL Documentation, “MERGE”（15 で追加）, <https://www.postgresql.org/docs/current/sql-merge.html>
+- dbt Documentation, “DuckDB configurations”（`merge` 戦略は DuckDB 1.4 以降）, <https://docs.getdbt.com/reference/resource-configs/duckdb-configs>
+- PostgreSQL Documentation, “Replication”（`max_slot_wal_keep_size`）, <https://www.postgresql.org/docs/current/runtime-config-replication.html>
 - PostgreSQL Documentation, “Logical Decoding”, <https://www.postgresql.org/docs/current/logicaldecoding.html>
 - DuckDB Documentation, “MERGE INTO Statement”, <https://duckdb.org/docs/current/sql/statements/merge_into>
 - Amazon S3 API Reference, “ListObjectsV2”, <https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html>

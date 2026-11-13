@@ -1,7 +1,7 @@
 with ranked as (
     select
         *,
-        row_number() over (partition by event_id order by received_at) as rn
+        row_number() over (partition by event_id order by received_at, event_time, customer_id, event_type) as rn
     from {{ source('raw', 'events') }}
 )
 

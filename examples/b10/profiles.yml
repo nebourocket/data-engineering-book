@@ -6,3 +6,8 @@ neboske:
       path: "{{ env_var('DBT_DUCKDB_PATH', 'neboske.duckdb') }}"
       schema: analytics
       threads: 1
+    ci:
+      type: duckdb
+      path: "{{ env_var('DBT_CI_PATH', 'ci.duckdb') }}"
+      schema: ci_pr
+      threads: 1

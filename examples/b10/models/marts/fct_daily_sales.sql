@@ -14,7 +14,7 @@ from {{ ref('fct_orders') }}
 where status <> 'cancelled'
 {% if is_incremental() %}
   and order_date >= (
-      select {{ dbt.dateadd('day', -3, 'max(order_date)') }} from {{ this }}
+      select {{ dbt.dateadd('day', -7, 'max(order_date)') }} from {{ this }}
   )
 {% endif %}
 group by order_date

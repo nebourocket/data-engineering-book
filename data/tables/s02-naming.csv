@@ -1,0 +1,6 @@
+よい名前,避けたい名前,理由
+`price`,`p`,何の値か読み取れる
+`subtotal`,`x1`,意味が分かる
+`tax_rate`,`TaxRate` や `tax rate`,Python では小文字と `_` でつなぐ書き方が普通 (スペースは使えない)
+`item_count`,`1st_item`,数字から始められない
+`total`,`class`,Python がすでに意味を持つ語 (予約語) は使えない

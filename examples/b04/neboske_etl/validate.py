@@ -1,7 +1,7 @@
 """CSV の 1 行（文字列だけの dict）を、検証済みの Order に変えます。"""
-from datetime import datetime
+from datetime import datetime, timezone
 
-from .models import VALID_STATUSES, Order, ValidationError
+from .models import CSV_TIMEZONE, VALID_STATUSES, Order, ValidationError
 
 
 def _to_int(row: dict[str, str], field: str, minimum: int) -> int:
@@ -21,7 +21,8 @@ def parse_order(row: dict[str, str]) -> Order:
     if status not in VALID_STATUSES:
         raise ValidationError("status", f"知らない値です: {row.get('status')!r}")
     try:
-        ordered_at = datetime.strptime((row.get("ordered_at") or "").strip(), "%Y-%m-%d %H:%M:%S")
+        local = datetime.strptime((row.get("ordered_at") or "").strip(), "%Y-%m-%d %H:%M:%S")
+        ordered_at = local.replace(tzinfo=CSV_TIMEZONE).astimezone(timezone.utc)  # JST を UTC にそろえる
     except ValueError:
         raise ValidationError("ordered_at", f"日時として読めません: {row.get('ordered_at')!r}") from None
     return Order(

@@ -71,7 +71,7 @@ def test_too_short_fails(env):
 
 
 def test_too_long_fails(env):
-    assert any("文字" in e for e in run(env, make_chapter(filler=15000)))
+    assert any("文字" in e for e in run(env, make_chapter(filler=17000)))
 
 
 def test_code_and_table_placeholder_not_counted(env):

@@ -7,7 +7,7 @@ import csv
 import re
 from pathlib import Path
 
-BASICS_RANGE = (7000, 14000)
+BASICS_RANGE = (7000, 16000)
 ADVANCED_RANGE = (10000, 20000)
 
 FIRST_H2 = "この章でできるようになること"

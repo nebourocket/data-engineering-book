@@ -3,8 +3,10 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -17,12 +19,12 @@ for path in (str(ROOT), str(HERE)):  # examples.common と neboske_etl を impor
         sys.path.insert(0, path)
 
 from make_sample import write_sample_csv  # noqa: E402
-from neboske_etl import retry as retry_module  # noqa: E402
 from neboske_etl.config import Settings  # noqa: E402
 from neboske_etl.models import Order, ValidationError  # noqa: E402
-from neboske_etl.pipeline import run, upload  # noqa: E402
+from neboske_etl.fetch import TransientError, fetch_json  # noqa: E402
+from neboske_etl.pipeline import TooManyRejects, run, upload  # noqa: E402
 from neboske_etl.reader import iter_rows  # noqa: E402
-from neboske_etl.retry import retry  # noqa: E402
+from neboske_etl.retry import call_with_retry  # noqa: E402
 from neboske_etl.validate import parse_order  # noqa: E402
 
 GOOD_ROW = {"order_id": "1", "customer_id": "10", "ordered_at": "2026-01-01 09:00:00",
@@ -44,7 +46,7 @@ def make_settings(csv_path, out_dir, **kw):
 
 def test_parse_order_returns_typed_order():
     order = parse_order(GOOD_ROW)
-    assert order == Order(1, 10, datetime(2026, 1, 1, 9, 0), "shipped", 2, 3400)
+    assert order == Order(1, 10, datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc), "shipped", 2, 3400)  # 9 時 (JST) は 0 時 (UTC)
 
 
 def test_status_case_is_normalized():
@@ -98,7 +100,7 @@ def test_run_splits_good_and_bad_rows(sample_csv, tmp_path):
     assert (result.read, result.written, result.rejected) == (3000, 2996, 4)
     table = pq.read_table(result.parquet_path)
     assert table.num_rows == 2996
-    assert str(table.schema.field("ordered_at").type) == "timestamp[ms]"
+    assert str(table.schema.field("ordered_at").type) == "timestamp[ms, tz=UTC]"
     assert set(table.column("status").to_pylist()) <= {"placed", "shipped", "delivered", "cancelled"}
     assert min(table.column("total_amount").to_pylist()) >= 0
     rejects = result.rejects_path.read_text(encoding="utf-8").splitlines()
@@ -117,7 +119,7 @@ def test_run_is_idempotent_and_leaves_no_temp_file(sample_csv, tmp_path):
     settings = make_settings(sample_csv, tmp_path / "out")
     first = run(settings)
     second = run(settings)
-    assert pq.read_table(first.parquet_path).num_rows == pq.read_table(second.parquet_path).num_rows
+    assert pq.read_table(first.parquet_path).equals(pq.read_table(second.parquet_path))
     assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["orders.parquet", "orders.rejects.csv"]
 
 
@@ -130,6 +132,27 @@ def test_failure_leaves_no_parquet(tmp_path):
     assert not list((tmp_path / "out").glob("*.tmp"))
 
 
+def test_header_error_keeps_previous_outputs(sample_csv, tmp_path):
+    out = tmp_path / "out"
+    run(make_settings(sample_csv, out))
+    before = (out / "orders.rejects.csv").read_bytes()
+    broken = tmp_path / "orders.csv"
+    broken.write_text("order_id,status\n1,placed\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        run(make_settings(broken, out))
+    assert (out / "orders.rejects.csv").read_bytes() == before  # 前回の記録を壊さない
+    assert (out / "orders.parquet").exists()
+
+
+def test_too_many_rejects_publishes_no_parquet(sample_csv, tmp_path):
+    out = tmp_path / "out"
+    with pytest.raises(TooManyRejects, match="0.13%"):
+        run(make_settings(sample_csv, out, max_reject_ratio=0.0001))
+    assert not (out / "orders.parquet").exists()  # 公開しない
+    assert (out / "orders.rejects.csv").exists()  # 原因調査のために記録は残す
+    assert not list(out.glob("*.tmp"))
+
+
 def test_clean_data_has_no_rejects(tmp_path):
     clean = tmp_path / "orders.csv"
     write_sample_csv(clean, defects=False)
@@ -139,48 +162,110 @@ def test_clean_data_has_no_rejects(tmp_path):
 
 # --- 再試行 -----------------------------------------------------------------
 
-@pytest.fixture
-def no_sleep(monkeypatch):
-    waits = []
-    monkeypatch.setattr(retry_module.time, "sleep", waits.append)
-    return waits
+def test_retry_succeeds_after_transient_failures():
+    calls, waits = [], []
 
-
-def test_retry_succeeds_after_transient_failures(no_sleep):
-    calls = []
-
-    @retry(attempts=3, wait=1.0)
     def flaky():
         calls.append(1)
         if len(calls) < 3:
-            raise OSError("一時的な失敗")
+            raise ConnectionError("一時的な失敗")
         return "ok"
 
-    assert flaky() == "ok"
-    assert no_sleep == [1.0, 2.0]  # 待ち時間は倍になる
+    assert call_with_retry(flaky, attempts=3, wait=1.0, sleep=waits.append) == "ok"
+    assert len(waits) == 2
+    assert 0 <= waits[0] <= 1.0 and 0 <= waits[1] <= 2.0  # 上限は倍になり、実際の待ちは乱数
 
 
-def test_retry_gives_up_and_reraises(no_sleep):
-    @retry(attempts=2, wait=0.5)
+def test_retry_gives_up_and_reraises():
+    waits = []
+
     def always_fails():
-        raise OSError("ずっと失敗")
+        raise TimeoutError("ずっと失敗")
 
-    with pytest.raises(OSError, match="ずっと失敗"):
-        always_fails()
-    assert no_sleep == [0.5]
+    with pytest.raises(TimeoutError, match="ずっと失敗"):
+        call_with_retry(always_fails, attempts=2, sleep=waits.append)
+    assert len(waits) == 1
 
 
-def test_retry_does_not_retry_other_exceptions(no_sleep):
-    calls = []
+@pytest.mark.parametrize("error", [PermissionError("権限が無い"), FileNotFoundError("無い"), KeyError("バグ")])
+def test_retry_does_not_retry_permanent_errors(error):
+    calls, waits = [], []
 
-    @retry(attempts=3)
-    def bug():
+    def broken():
         calls.append(1)
-        raise KeyError("バグ")
+        raise error
 
-    with pytest.raises(KeyError):
-        bug()
-    assert len(calls) == 1 and no_sleep == []
+    with pytest.raises(type(error)):
+        call_with_retry(broken, attempts=3, sleep=waits.append)
+    assert len(calls) == 1 and waits == []
+
+
+class FlakyServer:
+    """最初の数回は 500 を返し、そのあと JSON を返す小さな HTTP サーバ。"""
+
+    def __init__(self, failures):
+        outer = self
+        outer.failures, outer.hits = failures, 0
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                outer.hits += 1
+                if self.path == "/missing":
+                    self.send_response(404)
+                    self.end_headers()
+                elif outer.hits <= outer.failures:
+                    self.send_response(500)
+                    self.end_headers()
+                else:
+                    body = b'{"rate": 150}'
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_fetch_json_retries_server_errors():
+    server = FlakyServer(failures=2)
+    try:
+        waits = []
+        assert fetch_json(server.url + "/rate", sleep=waits.append) == {"rate": 150}
+        assert server.hits == 3 and len(waits) == 2
+    finally:
+        server.close()
+
+
+def test_fetch_json_does_not_retry_404():
+    import urllib.error
+
+    server = FlakyServer(failures=0)
+    try:
+        waits = []
+        with pytest.raises(urllib.error.HTTPError):
+            fetch_json(server.url + "/missing", sleep=waits.append)
+        assert server.hits == 1 and waits == []
+    finally:
+        server.close()
+
+
+def test_fetch_json_gives_up_after_attempts():
+    server = FlakyServer(failures=99)
+    try:
+        with pytest.raises(TransientError, match="HTTP 500"):
+            fetch_json(server.url + "/rate", attempts=3, sleep=lambda _: None)
+        assert server.hits == 3
+    finally:
+        server.close()
 
 
 # --- 設定 -------------------------------------------------------------------
@@ -195,6 +280,15 @@ def test_settings_from_env_uses_defaults():
 def test_settings_missing_required_variable_fails_fast():
     with pytest.raises(KeyError, match="ETL_INPUT"):
         Settings.from_env({"ETL_OUTPUT_DIR": "out"})
+
+
+def test_log_level_is_case_insensitive():
+    assert Settings.from_env({"ETL_INPUT": "i", "ETL_OUTPUT_DIR": "o", "LOG_LEVEL": "debug"}).log_level == "DEBUG"
+
+
+def test_bad_number_names_the_variable():
+    with pytest.raises(ValueError, match="ETL_BATCH_SIZE"):
+        Settings.from_env({"ETL_INPUT": "i", "ETL_OUTPUT_DIR": "o", "ETL_BATCH_SIZE": "たくさん"})
 
 
 def test_secret_is_not_in_repr():
@@ -223,7 +317,8 @@ def test_cli_success_logs_to_stderr(sample_csv, tmp_path):
 def test_cli_fails_when_too_many_rejects(sample_csv, tmp_path):
     result = run_cli(sample_csv, tmp_path / "out", ETL_MAX_REJECT_RATIO="0.0001")
     assert result.returncode == 1
-    assert "除外が多すぎます" in result.stderr
+    assert "除外が多すぎます: 0.13% (上限 0.01%)" in result.stderr
+    assert not (tmp_path / "out" / "orders.parquet").exists()
 
 
 def test_cli_debug_level_shows_each_rejected_row(sample_csv, tmp_path):
@@ -291,19 +386,9 @@ def test_run_etl_script_matches_book(tmp_path):
 
 
 def test_requirements_pin_exact_versions():
-    lines = (HERE / "requirements.txt").read_text(encoding="utf-8").split()
+    lines = [ln for name in ("requirements.txt", "requirements-dev.txt")
+             for ln in (HERE / name).read_text(encoding="utf-8").splitlines() if not ln.startswith("-r ")]
     assert lines and all(re.fullmatch(r"[A-Za-z0-9_.-]+==[0-9][0-9A-Za-z.]*", ln) for ln in lines)
-
-
-def test_upload_retries_connection_errors(sample_csv, tmp_path, no_sleep):
-    from botocore.exceptions import EndpointConnectionError
-
-    result = run(make_settings(sample_csv, tmp_path / "out"))
-    settings = make_settings(sample_csv, tmp_path / "out", s3_bucket="nowhere",
-                             s3_endpoint="http://127.0.0.1:1", s3_access_key="x", s3_secret_key="y")
-    with pytest.raises(EndpointConnectionError):
-        upload(settings, result.parquet_path)
-    assert no_sleep == [1.0, 2.0]  # 3 回試して、2 回待った
 
 
 # --- サービスを使う ---------------------------------------------------------

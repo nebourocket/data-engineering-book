@@ -3,7 +3,7 @@ import logging
 import sys
 
 from .config import Settings
-from .pipeline import run, upload
+from .pipeline import TooManyRejects, run, upload
 
 logger = logging.getLogger("neboske_etl")
 
@@ -14,10 +14,10 @@ def main() -> int:
         level=settings.log_level,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    result = run(settings)
-    if result.reject_ratio > settings.max_reject_ratio:
-        logger.error("除外が多すぎます: %.1f%% (上限 %.1f%%)",
-                     result.reject_ratio * 100, settings.max_reject_ratio * 100)
+    try:
+        result = run(settings)
+    except TooManyRejects as exc:
+        logger.error("%s", exc)
         return 1
     if settings.s3_bucket:
         upload(settings, result.parquet_path)

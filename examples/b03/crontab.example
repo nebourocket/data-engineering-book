@@ -1,4 +1,4 @@
 # 分 時 日 月 曜日 コマンド
 SHELL=/bin/bash
 MAILTO=""
-15 3 * * * /opt/neboske/bin/daily_report.sh /var/log/neboske/access.log /srv/reports >> /var/log/neboske/cron.log 2>&1
+15 3 * * * flock -n /var/lock/neboske-daily.lock /opt/neboske/bin/daily_report.sh /var/log/neboske/access.log /srv/reports $(date +\%F -d yesterday) >> /var/log/neboske/cron.log 2>&1

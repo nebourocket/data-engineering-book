@@ -1,8 +1,9 @@
 """注文 1 件を表す型と、検証の失敗を表す例外。"""
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 VALID_STATUSES = frozenset({"placed", "shipped", "delivered", "cancelled"})
+CSV_TIMEZONE = timezone(timedelta(hours=9))  # 入力 CSV の日時は日本時間（JST）
 
 
 class ValidationError(ValueError):
@@ -18,7 +19,7 @@ class ValidationError(ValueError):
 class Order:
     order_id: int
     customer_id: int
-    ordered_at: datetime
+    ordered_at: datetime  # UTC（タイムゾーン付き）
     status: str
     item_count: int
     total_amount: int

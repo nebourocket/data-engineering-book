@@ -1,7 +1,7 @@
 2996
 order_id: int64
 customer_id: int64
-ordered_at: timestamp[ms]
+ordered_at: timestamp[ms, tz=UTC]
 status: string
 item_count: int32
 total_amount: int64

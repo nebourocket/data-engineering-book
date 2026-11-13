@@ -5,6 +5,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def _read(env: Mapping[str, str], name: str, default: str, convert):
+    raw = env.get(name, default)
+    try:
+        return convert(raw)
+    except ValueError:
+        raise ValueError(f"{name} の値が正しくありません: {raw!r}") from None
+
+
 @dataclass(frozen=True)
 class Settings:
     input_path: Path
@@ -23,9 +31,9 @@ class Settings:
         return cls(
             input_path=Path(env["ETL_INPUT"]),
             output_dir=Path(env["ETL_OUTPUT_DIR"]),
-            batch_size=int(env.get("ETL_BATCH_SIZE", "1000")),
-            max_reject_ratio=float(env.get("ETL_MAX_REJECT_RATIO", "0.05")),
-            log_level=env.get("LOG_LEVEL", "INFO"),
+            batch_size=_read(env, "ETL_BATCH_SIZE", "1000", int),
+            max_reject_ratio=_read(env, "ETL_MAX_REJECT_RATIO", "0.05", float),
+            log_level=env.get("LOG_LEVEL", "INFO").upper(),
             s3_bucket=env.get("S3_BUCKET"),
             s3_endpoint=env.get("S3_ENDPOINT"),
             s3_access_key=env.get("S3_ACCESS_KEY"),

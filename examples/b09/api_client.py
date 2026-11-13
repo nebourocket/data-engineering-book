@@ -10,6 +10,8 @@ def get_json(url, token, params=None, sleep=time.sleep, max_attempts=5):
         response = requests.get(url, params=params, headers={"Authorization": f"Bearer {token}"}, timeout=10)
         if response.status_code == 429:
             # Retry-After が無い API もあるので、無ければ 1, 2, 4 ... 秒の指数バックオフにする
+            if attempt == max_attempts:
+                break  # 最後の 429 のあとは待たずに諦める
             wait = float(response.headers.get("Retry-After", 2 ** (attempt - 1)))
             sleep(wait)
             continue

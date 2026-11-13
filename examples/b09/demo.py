@@ -5,7 +5,6 @@
 import os
 import sys
 import uuid
-from datetime import timedelta
 from pathlib import Path
 
 import api_client
@@ -38,7 +37,8 @@ with psycopg.connect(dsn) as con:
     con.execute("UPDATE b09.orders SET status = 'cancelled', updated_at = now() WHERE order_id IN (1, 2)")
     con.execute("INSERT INTO b09.orders VALUES (9001, 1, 'placed', 1000, now())")
 print("変更後:", inc.load(duck, dsn), "件")
-print("全件を読み直した後の行数:", inc.load(duck, dsn, lookback=timedelta(days=400)), "件読んで",
+duck.execute("DELETE FROM watermark")  # ウォーターマークの行を消すと 1970 年に戻り、全件を読み直す
+print("全件を読み直した後の行数:", inc.load(duck, dsn), "件読んで",
       duck.execute("SELECT count(*) FROM orders").fetchone()[0], "行")
 
 print("--- landing (MinIO)")

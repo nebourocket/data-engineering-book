@@ -77,15 +77,20 @@ UPSERT = """
 """
 
 
+def to_arrow(rows):
+    """行のリストを Arrow の表にします。DuckDB に 1 度にまとめて渡せます (1 行ずつの INSERT は遅い)。"""
+    return pa.table({
+        "order_id": [r[0] for r in rows], "customer_id": [r[1] for r in rows],
+        "status": [r[2] for r in rows], "amount": [r[3] for r in rows],
+        "updated_at": pa.array([r[4] for r in rows], pa.timestamp("us", tz="UTC"))})
+
+
 def load(duck, pg_dsn, lookback=timedelta(0)):
     """差分を取り出して upsert し、ウォーターマークを進めます。取り込んだ件数を返します。"""
     rows = extract(pg_dsn, read_watermark(duck), lookback)
     if not rows:
         return 0
-    batch = pa.table({
-        "order_id": [r[0] for r in rows], "customer_id": [r[1] for r in rows],
-        "status": [r[2] for r in rows], "amount": [r[3] for r in rows],
-        "updated_at": pa.array([r[4] for r in rows], pa.timestamp("us", tz="UTC"))})
+    batch = to_arrow(rows)
     duck.execute("BEGIN")
     try:
         duck.register("batch", batch)
@@ -103,12 +108,23 @@ def load(duck, pg_dsn, lookback=timedelta(0)):
     return len(rows)
 
 
+def full_load(duck, pg_dsn):
+    """全件を読み、表ごと作り直します (小さい表向け)。読んだ件数を返します。"""
+    rows = extract(pg_dsn, datetime(1970, 1, 1, tzinfo=timezone.utc), timedelta(0))
+    duck.register("batch", to_arrow(rows))
+    duck.execute("CREATE OR REPLACE TABLE orders_full AS SELECT * FROM batch")
+    duck.unregister("batch")
+    return len(rows)
+
+
 def sync_deletes(duck, pg_dsn):
     """元で消えた行を、キーの突き合わせで見つけて取り込み先からも消します。消した件数を返します。"""
     with psycopg.connect(pg_dsn) as con:
         source_ids = {r[0] for r in con.execute("SELECT order_id FROM b09.orders")}
     target_ids = {r[0] for r in duck.execute("SELECT order_id FROM orders").fetchall()}
     gone = sorted(target_ids - source_ids)
-    for order_id in gone:
-        duck.execute("DELETE FROM orders WHERE order_id = ?", [order_id])
+    if gone:
+        duck.execute("BEGIN")
+        duck.execute("DELETE FROM orders WHERE order_id = ANY(?)", [gone])
+        duck.execute("COMMIT")
     return len(gone)

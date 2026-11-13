@@ -18,10 +18,20 @@ INSERT INTO shifts VALUES ('hanako', true), ('ken', true)
 """
 
 
+_open: list = []  # fresh() が開いた接続。次の fresh() か close_all() で閉じる
+
+
+def close_all() -> None:
+    while _open:
+        _open.pop().close()
+
+
 def fresh(dsn: str):
     """表を作り直し、接続 a と b を返します。"""
     reset_schema(dsn)
+    close_all()
     a, b = connect(dsn), connect(dsn)
+    _open.extend([a, b])
     for statement in SETUP_SQL.split(";\n"):
         a.execute(statement)
     return a, b
@@ -130,7 +140,8 @@ def write_skew(dsn: str, level: str) -> tuple[int, str | None]:
     on_duty = "SELECT count(*) FROM shifts WHERE on_duty"
     a.execute(f"BEGIN ISOLATION LEVEL {level}")
     b.execute(f"BEGIN ISOLATION LEVEL {level}")
-    assert a.execute(on_duty).fetchone()[0] == 2 and b.execute(on_duty).fetchone()[0] == 2
+    if a.execute(on_duty).fetchone()[0] != 2 or b.execute(on_duty).fetchone()[0] != 2:
+        raise RuntimeError("最初は 2 人とも出勤しているはずです")
     a.execute("UPDATE shifts SET on_duty = false WHERE staff = 'hanako'")
     b.execute("UPDATE shifts SET on_duty = false WHERE staff = 'ken'")
     a.execute("COMMIT")
@@ -151,3 +162,4 @@ if __name__ == "__main__":
               f" ファントム={phantom_read(dsn, level)} 更新の消失={lost_update(dsn, level)}"
               f" 書き込みスキュー={write_skew(dsn, level)}")
     print("原子的な更新", atomic_update(dsn, "READ COMMITTED"), "FOR UPDATE", select_for_update(dsn))
+    close_all()

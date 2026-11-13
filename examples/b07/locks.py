@@ -12,16 +12,26 @@ INSERT INTO stock VALUES (1, 10), (2, 20)
 """
 
 
+_open: list = []  # fresh() が開いた接続。次の fresh() か close_all() で閉じる
+
+
+def close_all() -> None:
+    while _open:
+        _open.pop().close()
+
+
 def fresh(dsn: str):
     reset_schema(dsn)
+    close_all()
     a, b = connect(dsn), connect(dsn)
+    _open.extend([a, b])
     for statement in SETUP_SQL.split(";\n"):
         a.execute(statement)
     return a, b
 
 
 def row_versions(dsn: str) -> tuple[tuple, tuple]:
-    """UPDATE の前後で、行の物理的な位置 ctid と作った取引の番号 xmin がどう変わるか。"""
+    """UPDATE の前後で、行の物理的な位置 ctid と作ったトランザクションの番号 xmin がどう変わるか。"""
     a, _ = fresh(dsn)
     query = "SELECT ctid::text, xmin::text, xmax::text, quantity FROM stock WHERE product_id = 1"
     before = a.execute(query).fetchone()
@@ -49,7 +59,8 @@ def reader_is_not_blocked(dsn: str) -> tuple[int, str]:
 def deadlock(dsn: str, same_order: bool) -> list[str]:
     """a は商品 1 → 2、b は商品 2 → 1 の順に更新する。same_order=True なら b も 1 → 2 の順にする。
 
-    戻り値は、エラーになった側の名前の一覧。デッドロックなら、PostgreSQL がどちらか 1 つを中止する。
+    戻り値は、エラーになった側の名前の一覧。デッドロックなら、PostgreSQL がどちらか 1 つを中止する
+    （どちらになるかは毎回同じとは限らない）。待ちの検査は deadlock_timeout（既定 1 秒）の後に走る。
     """
     a, b = fresh(dsn)
     failed = []
@@ -83,3 +94,4 @@ if __name__ == "__main__":
     print(reader_is_not_blocked(dsn))
     print("順番がばらばら", deadlock(dsn, same_order=False))
     print("順番をそろえた", deadlock(dsn, same_order=True))
+    close_all()

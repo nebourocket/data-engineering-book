@@ -4,7 +4,7 @@ from b07_db import connect, reset_schema
 # 段階 0: 表計算ソフトから貼り付けたままの表。明細が 1 つのセルに入っている。
 SHEET_DDL = """
 CREATE TABLE sheet (
-    order_id int, ordered_at date,
+    order_id int, ordered_at timestamptz,
     customer_name text, customer_email text, customer_prefecture text,
     items text)
 """
@@ -17,9 +17,9 @@ SHEET_ROWS = [
 # 第1正規形: 1 行 = 1 注文明細。セルの中に複数の値を入れない。
 FIRST_NF_DDL = """
 CREATE TABLE orders_1nf (
-    order_id int, line_no int, ordered_at date,
+    order_id int, line_no int, ordered_at timestamptz,
     customer_name text, customer_email text, customer_prefecture text,
-    product_id int, product_name text, category text, unit_price int, quantity int,
+    product_id int, product_name text, category text, unit_price numeric(12, 0), quantity int,
     PRIMARY KEY (order_id, line_no))
 """
 FIRST_NF_ROWS = [
@@ -32,11 +32,11 @@ FIRST_NF_ROWS = [
 # 第2正規形: 主キー (order_id, line_no) の一部 order_id だけで決まる列を、注文の表へ出す。
 SECOND_NF_DDL = """
 CREATE TABLE orders_2nf (
-    order_id int PRIMARY KEY, ordered_at date,
+    order_id int PRIMARY KEY, ordered_at timestamptz,
     customer_name text, customer_email text, customer_prefecture text);
 CREATE TABLE order_items_2nf (
     order_id int REFERENCES orders_2nf, line_no int,
-    product_id int, product_name text, category text, unit_price int, quantity int,
+    product_id int, product_name text, category text, unit_price numeric(12, 0), quantity int,
     PRIMARY KEY (order_id, line_no))
 """
 
@@ -47,11 +47,11 @@ CREATE TABLE customers (
 CREATE TABLE products (
     product_id int PRIMARY KEY, name text, category text);
 CREATE TABLE orders (
-    order_id int PRIMARY KEY, ordered_at date,
+    order_id int PRIMARY KEY, ordered_at timestamptz,
     customer_id int REFERENCES customers);
 CREATE TABLE order_items (
     order_id int REFERENCES orders, line_no int,
-    product_id int REFERENCES products, unit_price int, quantity int,
+    product_id int REFERENCES products, unit_price numeric(12, 0), quantity int,
     PRIMARY KEY (order_id, line_no))
 """
 
@@ -109,11 +109,11 @@ def run_stages(dsn: str) -> dict:
                      " (2, 1, 3, 800, 3), (3, 1, 1, 3000, 2)")
         out["updated_rows"] = conn.execute(UPDATE_THIRD_NF_SQL).rowcount
         conn.execute(WIDE_SQL)
-        out["wide"] = conn.execute(
-            "SELECT category, sum(sales) FROM order_lines_wide GROUP BY category ORDER BY category").fetchall()
-        out["normalized"] = conn.execute(
+        out["wide"] = [(c, int(v)) for c, v in conn.execute(
+            "SELECT category, sum(sales) FROM order_lines_wide GROUP BY category ORDER BY category").fetchall()]
+        out["normalized"] = [(c, int(v)) for c, v in conn.execute(
             "SELECT p.category, sum(i.quantity * i.unit_price) FROM order_items AS i"
-            " JOIN products AS p USING (product_id) GROUP BY p.category ORDER BY p.category").fetchall()
+            " JOIN products AS p USING (product_id) GROUP BY p.category ORDER BY p.category").fetchall()]
     return out
 
 

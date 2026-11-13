@@ -1,4 +1,4 @@
-import psycopg
+import pytest
 
 import acid
 import anomalies
@@ -6,6 +6,13 @@ import constraints
 import locks
 import normalization
 import safe_read
+
+
+@pytest.fixture(autouse=True)
+def _close_connections():
+    yield
+    anomalies.close_all()
+    locks.close_all()
 
 
 def test_normalization_removes_update_anomaly(pg_dsn):
@@ -70,10 +77,42 @@ def test_deadlock_and_consistent_order(pg_dsn):
 
 def test_safe_read(pg_dsn):
     safe_read.prepare(pg_dsn, 2500)
-    assert [len(r) for r in safe_read.read_in_batches(pg_dsn)] == [1000, 1000, 500]
+    batches = list(safe_read.read_in_batches(pg_dsn))
+    assert [len(r) for r in batches] == [1000, 1000, 500]
+    assert [r[0] for b in batches for r in b] == list(range(1, 2501))  # 抜けも重複もない
     assert "read-only" in safe_read.write_is_refused(pg_dsn)
+
+
+def test_batches_do_not_hold_transactions_but_named_cursor_does(pg_dsn):
+    safe_read.prepare(pg_dsn, 2500)
+    # 名前付きカーソルは、読み終わるまでトランザクションを開き続ける
+    assert safe_read.named_cursor_keeps_transaction_open(pg_dsn) == "idle in transaction"
+    # keyset のバッチは、バッチの間にトランザクションを閉じている
+    gen = safe_read.read_in_batches(pg_dsn)
+    next(gen)  # 1 バッチ目を受け取った状態で止める
+    import psycopg
+    with psycopg.connect(pg_dsn, autocommit=True) as watcher:
+        rows = [r for r in watcher.execute(safe_read.LONG_TRANSACTIONS_SQL).fetchall()
+                if r[1] == "de-book-extract"]
+    gen.close()
+    assert rows == []
+
+
+def test_forgotten_transactions(pg_dsn):
     rows = safe_read.show_my_session(pg_dsn)
     assert len(rows) == 1 and rows[0][2] == "idle in transaction"
+    assert safe_read.idle_timeout_kills_forgotten_transaction(pg_dsn) == "IdleInTransactionSessionTimeout"
+
+
+def test_read_only_default_can_be_switched(pg_dsn):
+    safe_read.prepare(pg_dsn, 10)
+    assert safe_read.readonly_can_be_switched(pg_dsn) == 1  # 既定を切り替えれば書けてしまう
+
+
+def test_foreign_key_columns_need_manual_indexes(pg_dsn):
+    names = constraints.list_indexes(pg_dsn)
+    assert {"customers_pkey", "customers_email_key", "orders_pkey", "order_items_pkey"} <= set(names)
+    assert {"orders_customer_id_idx", "order_items_product_id_idx"} <= set(names)
 
 
 def test_atomicity_rolls_back_both_updates(pg_dsn):

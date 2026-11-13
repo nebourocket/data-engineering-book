@@ -8,9 +8,6 @@ import pyarrow as pa
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from examples.common.neboske_shop import generate  # noqa: E402
 
-FAR_FUTURE = "9999-12-31"  # 「今も有効」を表す valid_to。履歴の区間は [valid_from, valid_to) の半開区間にする。
-
-
 def load_sources(con: duckdb.DuckDBPyConnection) -> None:
     """業務システムの表（customers・products・orders・order_items・events）を作る。"""
     for name, rows in generate().items():
@@ -50,15 +47,16 @@ FROM (SELECT DISTINCT lower(status) AS status FROM orders)
 """
 
 # 顧客ディメンション（タイプ 2 で履歴を持つ）。最初の版は登録日から有効。
-DIM_CUSTOMER_SQL = f"""
+# 「今も有効」を表す valid_to は 9999-12-31。履歴の区間は [valid_from, valid_to) の半開区間にする。
+DIM_CUSTOMER_SQL = """
 CREATE OR REPLACE SEQUENCE customer_key_seq START 1;
 CREATE OR REPLACE TABLE dim_customer (
     customer_key INTEGER, customer_id INTEGER, name VARCHAR, email VARCHAR, prefecture VARCHAR,
     valid_from DATE, valid_to DATE, is_current BOOLEAN);
-INSERT INTO dim_customer VALUES (-1, -1, '不明', NULL, '不明', DATE '1900-01-01', DATE '{FAR_FUTURE}', true);
+INSERT INTO dim_customer VALUES (-1, -1, '不明', NULL, '不明', DATE '1900-01-01', DATE '9999-12-31', true);
 INSERT INTO dim_customer
 SELECT nextval('customer_key_seq'), customer_id, name, email, prefecture,
-       CAST(registered_at AS TIMESTAMP)::DATE, DATE '{FAR_FUTURE}', true
+       CAST(registered_at AS TIMESTAMP)::DATE, DATE '9999-12-31', true
 FROM customers ORDER BY customer_id
 """
 
@@ -94,6 +92,21 @@ JOIN dim_order_status AS s USING (status_key)
 WHERE s.is_sales
 GROUP BY 1, 2, 3
 ORDER BY 1, 2, 3
+"""
+
+
+# モデルの検証: ファクトに対応するディメンションの行が無い（孤児）か、粒度は一意か、「不明」はどれだけか。
+ORPHAN_SQL = """
+SELECT (SELECT count(*) FROM fact_order_items WHERE date_key NOT IN (SELECT date_key FROM dim_date)) AS date_orphans,
+       (SELECT count(*) FROM fact_order_items WHERE customer_key NOT IN (SELECT customer_key FROM dim_customer)) AS customer_orphans,
+       (SELECT count(*) FROM fact_order_items WHERE product_key NOT IN (SELECT product_key FROM dim_product)) AS product_orphans,
+       (SELECT count(*) FROM fact_order_items WHERE status_key NOT IN (SELECT status_key FROM dim_order_status)) AS status_orphans
+"""
+GRAIN_SQL = """
+SELECT count(*) AS rows, count(DISTINCT (order_id, line_no)) AS distinct_grain FROM fact_order_items
+"""
+UNKNOWN_SHARE_SQL = """
+SELECT count(*) FILTER (WHERE customer_key = -1) AS unknown_rows, count(*) AS rows FROM fact_order_items
 """
 
 

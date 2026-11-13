@@ -92,6 +92,24 @@ def fulfillment_demo(con: duckdb.DuckDBPyConnection) -> list[list[tuple]]:
     return snapshots
 
 
+# ロールプレイングディメンション: 同じ dim_date を、受付日・出荷日・配達日の 3 つの役割で結合する。
+ROLE_PLAYING_SQL = """
+SELECT f.order_id, placed.date AS placed_on, shipped.date AS shipped_on, delivered.date AS delivered_on
+FROM fact_order_fulfillment AS f
+JOIN dim_date AS placed ON placed.date_key = f.placed_date_key
+JOIN dim_date AS shipped ON shipped.date_key = f.shipped_date_key
+JOIN dim_date AS delivered ON delivered.date_key = f.delivered_date_key
+"""
+
+# ジャンクディメンション: 値の種類が少ないフラグ類を 1 つの小さな表にまとめる。
+# is_gift と payment_method はねぼすけ商店のデータには無い、説明用の仮の列。
+JUNK_DIM_SQL = """
+CREATE OR REPLACE TABLE dim_order_flags AS
+SELECT row_number() OVER (ORDER BY payment_method, is_gift)::INTEGER AS flags_key, payment_method, is_gift
+FROM (VALUES ('card'), ('cod'), ('bank')) AS p(payment_method)
+CROSS JOIN (VALUES (true), (false)) AS g(is_gift)
+"""
+
 # 適合ディメンション: 行動ログのファクトも、同じ dim_date・dim_customer を使う。
 FACT_EVENTS_SQL = """
 CREATE OR REPLACE TABLE fact_events AS

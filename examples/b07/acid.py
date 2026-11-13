@@ -51,7 +51,7 @@ def take_day_off(conn, staff: str) -> bool:
 
 
 def retry(conn, func, *args, tries: int = 3):
-    """直列化失敗（SQLSTATE 40001）なら、取引を最初からやり直す。"""
+    """直列化失敗（SQLSTATE 40001）なら、トランザクションを最初からやり直す。"""
     for attempt in range(1, tries + 1):
         try:
             return func(conn, *args), attempt
@@ -64,6 +64,14 @@ def write_skew_with_retry(dsn: str) -> tuple[list, int]:
     """2 人が同時に休みを申請する。片方は直列化失敗になり、やり直しで「1 人しかいない」と断られる。"""
     prepare(dsn)
     a, b = connect(dsn), connect(dsn)
+    try:
+        return _skew_and_retry(a, b)
+    finally:
+        a.close()
+        b.close()
+
+
+def _skew_and_retry(a, b) -> tuple[list, int]:
     a.execute("BEGIN ISOLATION LEVEL SERIALIZABLE")
     b.execute("BEGIN ISOLATION LEVEL SERIALIZABLE")
     for conn in (a, b):

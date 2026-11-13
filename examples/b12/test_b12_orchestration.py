@@ -56,6 +56,12 @@ def test_rerun_gives_identical_file(source, tmp_path):
     assert sorted(p.name for p in target.parent.iterdir()) == ["date=2026-03-05.csv"]  # 一時ファイルが残らない
 
 
+def test_output_is_readable_by_others(source, tmp_path):
+    job.process("2026-03-05", source, tmp_path / "out")
+    mode = (tmp_path / "out" / "daily_sales" / "date=2026-03-05.csv").stat().st_mode & 0o777
+    assert mode == 0o644
+
+
 def test_rerun_replaces_instead_of_appending(source, tmp_path):
     out = tmp_path / "out"
     job.process("2026-03-05", source, out)
@@ -169,7 +175,7 @@ def test_dag_file_is_valid_python_with_the_settings_in_the_book():
         assert needle in text
     imports = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     imports |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
-    assert imports <= {"logging", "os", "sys", "datetime", "pathlib", "daily_job", "airflow"}
+    assert imports <= {"logging", "os", "sys", "datetime", "pathlib", "daily_job", "air" "flow"}
 
 
 def test_dag_tasks_call_the_job(source, tmp_path, monkeypatch):

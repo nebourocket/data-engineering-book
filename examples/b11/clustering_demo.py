@@ -15,7 +15,7 @@ sys.path.insert(0, str(HERE))
 from partition_demo import UNITS, sales_lines  # noqa: E402
 
 ROW_GROUP = 10_000
-QUERY = "SELECT count(*) FROM read_parquet('{path}') WHERE customer_id = 42"
+QUERY = "SELECT count(*) FROM read_parquet('{path}') WHERE {column} = {value}"
 
 
 def write_both(workdir: Path) -> dict[str, Path]:
@@ -32,10 +32,10 @@ def write_both(workdir: Path) -> dict[str, Path]:
     return paths
 
 
-def row_groups_scanned(path: Path) -> dict:
+def row_groups_scanned(path: Path, column: str = "customer_id", value: int = 42) -> dict:
     """EXPLAIN ANALYZE から、読んだ行グループの数と読んだバイト数を取り出します。"""
     con = duckdb.connect()
-    plan = con.execute("EXPLAIN ANALYZE " + QUERY.format(path=path)).fetchall()[0][1]
+    plan = con.execute("EXPLAIN ANALYZE " + QUERY.format(path=path, column=column, value=value)).fetchall()[0][1]
     scanned, total = re.search(r"Row Groups Scanned: (\d+) / (\d+)", plan).groups()
     value, unit = re.search(r"Data Read:\s+([\d.]+) (B|kB|MB|GB)", plan).groups()
     return {"scanned": int(scanned), "total": int(total), "bytes_read": round(float(value) * UNITS[unit])}

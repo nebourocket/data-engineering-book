@@ -68,6 +68,7 @@ def process(day: str, source: Path, out_dir: Path) -> int:
             writer = csv.writer(f)
             writer.writerow(COLUMNS)
             writer.writerows(rows)
+        os.chmod(tmp, 0o644)  # mkstemp は本人しか読めない 0600 で作るので、読む側のために 0644 にする
         os.replace(tmp, target)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)

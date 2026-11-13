@@ -23,6 +23,12 @@ SELECT sum(quantity * unit_price) AS revenue
 FROM sales
 WHERE month = '2026-03';
 
+-- name: explain_date_filter
+EXPLAIN ANALYZE
+SELECT sum(quantity * unit_price) AS revenue
+FROM sales
+WHERE ordered_at >= '2026-03-01' AND ordered_at < '2026-04-01';
+
 -- name: monthly_partial
 SELECT month, sum(quantity * unit_price) AS revenue, count(*) AS n
 FROM sales
@@ -43,3 +49,19 @@ FROM (
 SELECT sum(quantity * unit_price) AS revenue,
        avg(quantity * unit_price) AS avg_line
 FROM sales;
+
+-- name: ex_two_months
+SELECT sum(quantity * unit_price) AS revenue
+FROM sales
+WHERE month IN ('2026-04', '2026-05');
+
+-- name: ex_one_day_with_month
+SELECT sum(quantity * unit_price) AS revenue
+FROM sales
+WHERE month = '2026-03'
+  AND ordered_at >= '2026-03-05' AND ordered_at < '2026-03-06';
+
+-- name: ex_one_day_only
+SELECT sum(quantity * unit_price) AS revenue
+FROM sales
+WHERE ordered_at >= '2026-03-05' AND ordered_at < '2026-03-06';

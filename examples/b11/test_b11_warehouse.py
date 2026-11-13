@@ -52,6 +52,24 @@ def test_explain_shows_pruning(root):
     assert "Scanning Files: 1/6" in plan and "Total Files Read: 1" in plan
 
 
+def test_row_groups_skipped_by_zone_maps_without_partition_filter(root):
+    con = demo.open_sales(root)
+    plan = con.execute(QUERIES["explain_date_filter"]).fetchall()[0][1]
+    assert "Total Files Read: 6" in plan and "Row Groups Scanned: 1 / 6" in plan
+
+
+def test_exercise_queries(root):
+    con = demo.open_sales(root)
+    assert con.execute(QUERIES["ex_two_months"]).fetchone() == (258_292_600 + 155_564_450,)
+    assert demo.scan_stats(con, QUERIES["ex_two_months"])["files_read"] == 2
+    with_month = demo.scan_stats(con, QUERIES["ex_one_day_with_month"])
+    only_day = demo.scan_stats(con, QUERIES["ex_one_day_only"])
+    assert with_month["files_read"] == 1 and only_day["files_read"] == 6
+    assert only_day["bytes_read"] > 1.2 * with_month["bytes_read"]
+    a = con.execute(QUERIES["ex_one_day_with_month"]).fetchone()
+    assert a == con.execute(QUERIES["ex_one_day_only"]).fetchone()
+
+
 def test_same_answer_with_and_without_partition_filter(root):
     con = demo.open_sales(root)
     a = con.execute(QUERIES["month_filter"]).fetchone()
@@ -79,8 +97,11 @@ def test_clustering_skips_row_groups(tmp_path):
     assert shuffled["scanned"] == shuffled["total"] == 15
     assert ordered["scanned"] == 1 and ordered["total"] == 15
     assert ordered["bytes_read"] < shuffled["bytes_read"] / 5
+    # 並べた列（customer_id）以外の列で絞っても、読み飛ばせない
+    other = cl.row_groups_scanned(paths["customer_id 順"], column="product_id", value=7)
+    assert other["scanned"] == other["total"] == 15
     con = duckdb.connect()
-    counts = [con.execute(cl.QUERY.format(path=p)).fetchone() for p in paths.values()]
+    counts = [con.execute(cl.QUERY.format(path=p, column='customer_id', value=42)).fetchone() for p in paths.values()]
     assert counts[0] == counts[1]  # 並べ方を変えても答えは同じ
 
 

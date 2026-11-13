@@ -110,7 +110,7 @@ def test_error_full_text_matches_book():
 
 
 def test_exercises():
-    assert run("exercises.py") == (0, "1920\n2\n1\n1100\nアイマスクは1500円です\n7\n34\n")
+    assert run("ex_answers.py") == (0, "1920\n2\n1\n1100\nアイマスクは1500円です\n7\n34\n")
 
 
 def test_exercise_input():
@@ -123,3 +123,8 @@ def test_repl_session():
         [sys.executable, "-I", "-i", "-q"], env=ENV, input='x = 5\nx\nprint(x * 2)\n"nebo" + "suke"\n',
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", check=False)
     assert r.stdout == ">>> >>> 5\n>>> 10\n>>> 'nebosuke'\n>>> \n"
+
+
+def test_docker_commands_parse():
+    """docker を使う手順は、この環境では動かせないので構文だけ確かめます。"""
+    assert subprocess.run(["bash", "-n", str(HERE / "08_run.sh")]).returncode == 0

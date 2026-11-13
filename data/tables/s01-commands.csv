@@ -1,0 +1,10 @@
+コマンド,はたらき,打ち方の例
+`pwd`,今いるフォルダを表示する,`pwd`
+`ls`,フォルダの中身を一覧する,`ls` / `ls -a` (隠しファイルも)
+`cd`,今いるフォルダを変える,`cd deb-practice` / `cd ..` / `cd ~`
+`mkdir`,フォルダを作る,`mkdir deb-practice` / `mkdir -p a/b/c`
+`echo`,文字を表示する (`>` と組み合わせるとファイルに書く),`echo "こんにちは"`
+`cat`,ファイルの中身を表示する,`cat memo.txt`
+`cp`,ファイルをコピーする,`cp memo.txt memo-copy.txt`
+`mv`,ファイルを移動する・名前を変える,`mv memo-copy.txt note.txt`
+`rm`,ファイルを消す (ごみ箱には入らない),`rm note.txt`

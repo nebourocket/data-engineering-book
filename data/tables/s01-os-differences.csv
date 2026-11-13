@@ -1,0 +1,8 @@
+項目,Windows (WSL 2 の Ubuntu),Mac
+ターミナルの開き方,スタートメニューから「Ubuntu」を開く,Spotlight (⌘+スペース) で「ターミナル」と入力する
+入れる前に必要なこと,Windows 10 (2004 以降) か Windows 11。管理者権限の PowerShell で `wsl --install`,なし (ターミナルは最初から入っている)
+ホームフォルダ,`/home/ユーザー名` (WSL の中),`/Users/ユーザー名`
+パスの区切り,`/` (Windows 側の `\` とは別),`/`
+Git,Ubuntu で `sudo apt install git`,初めて `git` を打つと入れるよう案内が出る
+Docker,Docker Desktop と WSL 統合,Docker Desktop
+VS Code でフォルダを開く,WSL 拡張を入れて `code .`,`code .` (PATH に入れた場合)

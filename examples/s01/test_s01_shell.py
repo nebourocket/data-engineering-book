@@ -70,3 +70,9 @@ def test_syntax(script):
 def test_dockerfile_copy_matches_repo():
     """本文に載せる Dockerfile が、リポジトリ直下の本物と同じであることを確かめます。"""
     assert (HERE / "Dockerfile.book").read_text(encoding="utf-8") == (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+
+def test_exercises(home):
+    code, out = run("exercises.sh", home)
+    assert code == 0
+    assert out == "/home/taro/deb-practice/shop\nbackup.txt\nアイマスク 1500\n/home/taro/deb-practice\n"

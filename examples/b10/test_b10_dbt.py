@@ -129,7 +129,7 @@ def test_incremental_keeps_a_stale_row_when_the_day_becomes_empty(project):
     con.close()
     dbt(project, "build", "--select", "stg_orders+", "--exclude", "tag:known_issue")
     stale = f"select count(*) from analytics.fct_daily_sales where order_date = '{last}'"
-    assert query(project, stale) == [(1,)]  # 結果が 0 行の日は消す対象にならず、古い行が残る
+    assert query(project, stale) == [(1,)]  # 結果が 0 行になった日は消す対象にならず、古い行が残る (窓の中のどの日でも同じ)
     dbt(project, "build", "--select", "fct_daily_sales", "--full-refresh")
     assert query(project, stale) == [(0,)]  # 全件を作り直すと消える
 
@@ -172,3 +172,16 @@ def test_exercise_failing_singular_test_then_fixed(project):
 
 def test_ci_target_parses(project):
     dbt(project, "parse", "--target", "ci")
+
+
+def test_setup_sequence_shown_in_chapter(tmp_path):
+    """本文の手順 (生データの書き出し → dbt debug → dbt seed → dbt run) をそのまま動かす。"""
+    proj = tmp_path / "neboske_dbt"
+    shutil.copytree(HERE, proj, ignore=shutil.ignore_patterns("test_*.py", "__pycache__", "target", "logs", "*.duckdb"))
+    write_duckdb(proj / "neboske.duckdb")
+    env = {k: v for k, v in os.environ.items() if k != "DBT_DUCKDB_PATH"}
+    env["DBT_SEND_ANONYMOUS_USAGE_STATS"] = "False"
+    for command in (["debug"], ["seed"], ["run"]):
+        result = subprocess.run(["dbt", *command, "--profiles-dir", "."], cwd=proj, env=env,
+                                capture_output=True, text=True)
+        assert result.returncode == 0, (command, result.stdout[-2000:])

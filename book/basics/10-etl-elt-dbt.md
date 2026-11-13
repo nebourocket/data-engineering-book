@@ -96,18 +96,20 @@ dbt は**データを運びません**。E と L には関わらず、基盤の�
 手元で動かす手順は `examples/b10/usage.sh` にあります。Docker の開発用イメージで動かす場合、リポジトリの直下で次を実行します。生データ (ねぼすけ商店) を、プロジェクトのフォルダに DuckDB のファイルとして書き出します。
 
 ```bash
-alias DEV='docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/w -w /w/examples/b10 de-book-dev'
-DEV python -c "import sys; sys.path.insert(0, '../common'); from neboske_shop import write_duckdb; write_duckdb('neboske.duckdb')"
+dev() { docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/w -w /w/examples/b10 de-book-dev "$@"; }
+dbt() { dev dbt "$@"; }
+dev python -c "import sys; sys.path.insert(0, '../common'); from neboske_shop import write_duckdb; write_duckdb('neboske.duckdb')"
 ```
 
-`-w /w/examples/b10` で、作業フォルダがプロジェクトの中になります。以降の `dbt` は、すべてこのフォルダで動かします。最初に、接続の確認 (`dbt debug`) と、全 model の実行 (`dbt run`) をしておきます。
+`-w /w/examples/b10` で、作業フォルダがプロジェクトの中になります。`dbt` は上の関数で Docker の中の `dbt` を呼ぶ短縮で、以降のコマンドもすべてこのフォルダで動かします。最初に、接続の確認 (`dbt debug`)、seed の取り込み (`dbt seed`)、全 model の実行 (`dbt run`) をしておきます。
 
 ```bash
-DEV dbt debug --profiles-dir .
-DEV dbt run --profiles-dir .
+dbt debug --profiles-dir .
+dbt seed --profiles-dir .
+dbt run --profiles-dir .
 ```
 
-`dbt debug` は、設定ファイルと接続が読めているかを調べます。`dbt run` は model だけを作り、テストは回しません。ここで失敗するなら、テストの前に設定の問題です。DuckDB のファイルのパスは環境変数 `DBT_DUCKDB_PATH` で変えられ、指定しなければ、プロジェクトのフォルダの `neboske.duckdb` を使います。dbt は実行するたびに、`target/` (展開後の SQL と結果) と `logs/` を作ります。これらと DuckDB のファイルはリポジトリに入れないので、`.gitignore` に `target/` `logs/` `dbt_packages/` と `*.duckdb` を書きます (この例の `examples/b10/.gitignore` と同じです)。
+`dbt debug` は、設定ファイルと接続が読めているかを調べます。`dbt seed` は、`seeds/` の CSV (都道府県と地方の対応表) を表にします。`dim_customers` がこの表を読むので、`dbt run` より前に必要です 。`dbt run` は model だけを作り、テストは回しません。ここで失敗するなら、テストより前の段階、つまり設定・接続・SQL の問題です。DuckDB のファイルのパスは環境変数 `DBT_DUCKDB_PATH` で変えられ、指定しなければ、プロジェクトのフォルダの `neboske.duckdb` を使います。dbt は実行するたびに、`target/` (展開後の SQL と結果) と `logs/` を作ります。これらと DuckDB のファイルはリポジトリに入れないので、`.gitignore` に `target/` `logs/` `dbt_packages/` と `*.duckdb` を書きます (この例の `examples/b10/.gitignore` と同じです)。
 
 ## プロジェクトの構成
 
@@ -162,7 +164,7 @@ neboske:
       threads: 1
 ```
 
-`{{ ... }}` の中は Jinja というテンプレートの式で、`env_var` は環境変数を読みます。`schema: analytics` が、dbt の作る表の置き場所です。`threads: 1` は、同時に実行する model の数です。依存のない model が複数あれば、増やすと並列に作られます。DuckDB のファイルは同時に書けるのが 1 つの接続に限られるので、この例は 1 にしています。`target` を `dev`・`prod` のように書き分けると、同じプロジェクトを別の環境に向けられます。
+`{{ ... }}` の中は Jinja というテンプレートの式で、`env_var` は環境変数を読みます。`schema: analytics` が、dbt の作る表の置き場所です。`threads: 1` は、同時に実行する model の数です。依存のない model が複数あれば、増やすと並列に作られます。この例は 1 です。`target` を `dev`・`prod` のように書き分けると、同じプロジェクトを別の環境に向けられます。
 
 ## model・source・ref
 
@@ -209,7 +211,7 @@ select
 from {{ source('raw', 'orders') }}
 ```
 
-なお、ねぼすけ商店の時刻は、タイムゾーンのない文字列 (日本時間として扱うもの) です。`cast(... as timestamp)` はタイムゾーンなしの時刻になり、`cast(... as date)` の日付も日本時間の日付です。本物のデータでは、第2章の決まり (UTC でタイムゾーン付き) に合わせて、staging で変換します。
+なお、ねぼすけ商店の時刻は、タイムゾーンのない日本時間の文字列です。`cast(... as timestamp)` はタイムゾーンなしの時刻になり、日付も日本時間のものです。本物のデータでは、第2章の決まり (UTC でタイムゾーン付き) に合わせて、staging で変換します。
 
 そして marts の `fct_orders` は、`ref` で staging と intermediate を読みます。
 
@@ -380,7 +382,7 @@ Completed with 1 error, 0 partial successes, and 0 warnings:
 YAML の `description` に書いた説明は、`dbt docs generate` で集められて、ドキュメントのサイトになります。`dbt docs serve` で、手元のブラウザから見られます。
 
 ```bash
-DEV dbt docs generate --profiles-dir .
+dbt docs generate --profiles-dir .
 ```
 
 サイトを見るには `dbt docs serve` を使いますが、Docker の中で動かすと、既定では外から見えません。待ち受けを `0.0.0.0` にして、ポートを公開します。
@@ -466,13 +468,13 @@ group by order_date
 
 `unique_key='order_date'` と `incremental_strategy='delete+insert'` は、取り込み先に書き込む方法を決めます。新しく計算した結果に含まれる日付の行を、いったん消してから挿入し直します。これは、第9章のパーティションの置き換えと同じ考え方で、同じ日を何度計算し直しても、結果は変わりません (冪等)。dbt-duckdb が扱う戦略は、`append`・`delete+insert`・`merge` (DuckDB 1.4 以降)・`microbatch` (dbt-core 1.9 以降) です。既定が何かは文書に明記されていないので、この例のように `incremental_strategy` を明示して指定します。
 
-テストで、次の 3 つを別々に確かめています。
+次の 2 つはテスト (pytest) で別々に確かめ、3 つ目は `_marts.yml` のスキーマテストが `dbt build` の中で確かめます。
 
 1. 新しい日の注文を足すと、日別売上が 1 行増える (`test_incremental_new_day_is_added`)。
 2. 窓の中の日の 2 件のうち 1 件をキャンセルにすると、その日の売上が新しい値に変わる。窓より古い日の同じ変更は、incremental では反映されず、`--full-refresh` で初めて反映される (`test_incremental_recomputes_days_inside_the_window_only`)。
-3. 日付が重複せず、`unique` テストを通る。
+3. 日付が重複せず、`unique` テストを通る (`_marts.yml` の `order_date` の `unique`)。
 
-もう 1 つ落とし穴があります。**後の日の注文を足さずに**、最後の日の注文を**すべて**キャンセルにして incremental で回すと、その日の行は消えず、古い売上のまま残ります。`delete+insert` は、**新しい結果に含まれる日付だけ**を消すからです。その日の結果が 0 行 (すべてキャンセル) だと、消す対象にもなりません。`--full-refresh` を付けると、表を作り直して、この行は消えます (`test_incremental_keeps_a_stale_row_when_the_day_becomes_empty`)。
+もう 1 つ落とし穴があります。窓の中のどの日でも、その日の注文を**すべて**キャンセルにして incremental で回すと、その日の行は消えず、古い売上のまま残ります (テストは、窓の最後の日で確かめています)。`delete+insert` は、**新しい結果に含まれる日付だけ**を消すからです。その日の結果が 0 行 (すべてキャンセル) だと、消す対象にもなりません。`--full-refresh` を付けると、表を作り直して、この行は消えます (`test_incremental_keeps_a_stale_row_when_the_day_becomes_empty`)。
 
 ```console
 $ dbt build --select fct_daily_sales --full-refresh --profiles-dir .
@@ -486,6 +488,7 @@ CI (継続的インテグレーション) は、変更を出すたびに自動�
 
 ```yaml
 # GitHub Actions の例 (本書のリポジトリでは examples の下に置いて動かしません)
+# 注意: CI 用の接続先 (ci.duckdb) に生データの表を入れる手順は省いてあります
 # 各 action のバージョンは 2026年11月時点
 name: dbt
 on:
@@ -509,7 +512,7 @@ jobs:
 
 ポイントは 3 つです。(1) `profiles.yml` に CI 専用の接続先 (`ci`) を用意し、スキーマも別 (`ci_pr`) にして、本番や開発の表に触れないようにします。(2) `dbt deps` は、`packages.yml` に書いた外部のパッケージを取得します (この例のプロジェクトは使いませんが、使う場合は CI の最初に要ります)。(3) パスワードなどの秘密は、リポジトリの secrets から環境変数に渡し、`profiles.yml` では `env_var` で読みます。DuckDB の例にはパスワードがないので、`WAREHOUSE_PASSWORD` は形だけです。
 
-本書のリポジトリでは、`pytest` が `dbt build` を呼びます。`test_b10_dbt.py` は、プロジェクトを一時フォルダにコピーし、ねぼすけ商店のデータを入れた一時の DuckDB に対して実行し、結果を検査します。`dbt` の終了コードが 0 でなければ pytest が失敗し、CI が止まります。本物のデータウェアハウスでは、CI 専用のスキーマで回すのが一般的です。変更した model とその下流だけを回す方法もあります。dbt Core では `state:modified+` の選択と `--defer` を使い、ひとつ前の実行結果 (manifest) と比べます (参考文献の “Node selection methods”)。公式の “Continuous integration” は dbt のサービス側の機能の説明なので、dbt Core の CI は上の例のように自分で組みます。毎日自動で回す仕組みは、第12章の話です。
+上の例は、CI 用の表に生データを入れる準備 (`ci.duckdb` に生データの表を書く手順) を省いた形です。本物の CI では、その準備が先に要ります。本書のリポジトリでは、`pytest` が準備も含めて `dbt build` を呼びます。`test_b10_dbt.py` は、プロジェクトを一時フォルダにコピーし、ねぼすけ商店のデータを入れた一時の DuckDB に対して実行し、結果を検査します。`dbt` の終了コードが 0 でなければ pytest が失敗し、CI が止まります。本物のデータウェアハウスでは、CI 専用のスキーマで回すのが一般的です。変更した model とその下流だけを回す方法もあります。dbt Core では `state:modified+` の選択と `--defer` を使い、ひとつ前の実行結果 (manifest) と比べます (参考文献の “Node selection methods”)。公式の “Continuous integration” はサービス側の機能の説明なので、dbt Core の CI は上の例のように自分で組みます。毎日自動で回す仕組みは、第12章の話です。
 
 ## よくある失敗
 

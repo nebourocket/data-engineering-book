@@ -1,4 +1,5 @@
 # GitHub Actions の例 (本書のリポジトリでは examples の下に置いて動かしません)
+# 注意: CI 用の接続先 (ci.duckdb) に生データの表を入れる手順は省いてあります
 # 各 action のバージョンは 2026年11月時点
 name: dbt
 on:

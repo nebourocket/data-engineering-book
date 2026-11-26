@@ -1,0 +1,2 @@
+7
+{'order_id': '1', 'item': 'アイマスク', 'price': '1500', 'quantity': '2'}

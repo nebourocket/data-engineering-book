@@ -1,0 +1,23 @@
+version: 2
+
+sources:
+  - name: raw
+    description: ねぼすけ商店の生データ (取り込み直後。加工していない)
+    schema: main
+    tables:
+      - name: customers
+        columns:
+          - name: email
+            data_tests:
+              - unique:
+                  config:
+                    tags: [known_issue]
+      - name: orders
+      - name: order_items
+      - name: events
+        columns:
+          - name: event_id
+            data_tests:
+              - unique:
+                  config:
+                    severity: warn

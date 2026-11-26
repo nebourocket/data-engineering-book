@@ -1,0 +1,26 @@
+--- ステータスごとの件数
+     32 200
+     15 500
+      8 304
+      5 404
+--- 500 を返したパスの上位 3 件
+      5 /checkout
+      4 /products/12
+      2 /products/7
+--- パスごとの平均応答ミリ秒
+/ 58.8
+/cart 53.3
+/checkout 30.5
+/products/12 37.8
+/products/31 34.4
+/products/7 26.9
+/search 63.2
+--- grep の使い方
+15
+2026-11-02T09:05:36+09:00 POST /cart 200 16 customer=25
+2026-11-02T09:15:25+09:00 POST /checkout 500 18 customer=9
+28
+--- リダイレクト
+20
+ls: cannot access '/no/such/dir': No such file or directory
+終了コード: 2

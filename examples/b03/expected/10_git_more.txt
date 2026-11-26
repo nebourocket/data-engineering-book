@@ -1,0 +1,7 @@
+batch_size = 100
+1
+UU etl.py
+fix: バッチを 1000 に
+fix: バッチを 500 に
+feat: ETL の雛形を追加
+A  notes.txt

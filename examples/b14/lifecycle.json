@@ -1,0 +1,17 @@
+{
+  "Rules": [
+    {
+      "ID": "events-to-cold-then-expire",
+      "Filter": {"Prefix": "events/"},
+      "Status": "Enabled",
+      "Transitions": [{"Days": 30, "StorageClass": "STANDARD_IA"}],
+      "Expiration": {"Days": 365}
+    },
+    {
+      "ID": "tmp-expire-fast",
+      "Filter": {"Prefix": "tmp/"},
+      "Status": "Enabled",
+      "Expiration": {"Days": 1}
+    }
+  ]
+}

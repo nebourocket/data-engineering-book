@@ -1,0 +1,32 @@
+semantic_models:
+  - name: order_lines
+    model: ref('fct_order_lines')
+    defaults:
+      agg_time_dimension: ordered_at
+    entities:
+      - name: order_line
+        type: primary
+        expr: order_line_id
+      - name: customer
+        type: foreign
+        expr: customer_id
+    dimensions:
+      - name: ordered_at
+        type: time
+        type_params:
+          time_granularity: day
+      - name: status
+        type: categorical
+    measures:
+      - name: line_amount
+        agg: sum
+        expr: quantity * unit_price
+
+metrics:
+  - name: net_sales
+    label: 売上 (キャンセルを除く)
+    type: simple
+    type_params:
+      measure: line_amount
+    filter: |
+      {{ Dimension('order_line__status') }} != 'cancelled'

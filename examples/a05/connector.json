@@ -1,0 +1,21 @@
+{
+  "name": "neboske-orders-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "orders-db.internal",
+    "database.port": "5432",
+    "database.user": "debezium",
+    "database.password": "${file:/secrets/db.properties:password}",
+    "database.dbname": "shop",
+    "plugin.name": "pgoutput",
+    "slot.name": "debezium_orders",
+    "publication.name": "dbz_orders",
+    "publication.autocreate.mode": "disabled",
+    "topic.prefix": "neboske",
+    "table.include.list": "public.orders,public.order_items",
+    "snapshot.mode": "initial",
+    "heartbeat.interval.ms": "10000",
+    "tombstones.on.delete": "true",
+    "decimal.handling.mode": "string"
+  }
+}

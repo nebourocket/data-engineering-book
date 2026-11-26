@@ -1,0 +1,21 @@
+# GitHub Actions の例 (本書のリポジトリでは examples の下に置いて動かしません)
+# 注意: CI 用の接続先 (ci.duckdb) に生データの表を入れる手順は省いてあります
+# 各 action のバージョンは 2026年11月時点
+name: dbt
+on:
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # 本物のデータウェアハウスでは、秘密は secrets から環境変数で渡し、profiles.yml の env_var で読む
+      WAREHOUSE_PASSWORD: ${{ secrets.WAREHOUSE_PASSWORD }}
+      DBT_CI_PATH: ci.duckdb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: dbt deps --project-dir examples/b10 --profiles-dir examples/b10
+      - run: dbt build --target ci --project-dir examples/b10 --profiles-dir examples/b10

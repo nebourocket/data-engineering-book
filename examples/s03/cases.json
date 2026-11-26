@@ -1,0 +1,81 @@
+{
+ "compare": {
+  "script": "s03_01_compare.py"
+ },
+ "logic": {
+  "script": "s03_02_logic.py"
+ },
+ "if": {
+  "script": "s03_03_if.py"
+ },
+ "elif": {
+  "script": "s03_04_elif.py"
+ },
+ "noindent": {
+  "script": "s03_err_noindent.py"
+ },
+ "zenkaku": {
+  "script": "s03_err_zenkaku.py"
+ },
+ "eq": {
+  "script": "s03_err_eq.py"
+ },
+ "for": {
+  "script": "s03_06_for.py"
+ },
+ "range": {
+  "script": "s03_07_range.py"
+ },
+ "while": {
+  "script": "s03_08_while.py"
+ },
+ "retry": {
+  "script": "s03_09_retry.py",
+  "stdin": "さん\n3個\n3\n"
+ },
+ "break_continue": {
+  "script": "s03_11_break_continue.py"
+ },
+ "list": {
+  "script": "s03_12_list.py"
+ },
+ "index": {
+  "script": "s03_err_index.py"
+ },
+ "list_ops": {
+  "script": "s03_13_list_ops.py"
+ },
+ "dict": {
+  "script": "s03_14_dict.py"
+ },
+ "keyerror": {
+  "script": "s03_err_keyerror.py"
+ },
+ "dict_get": {
+  "script": "s03_15_dict_get.py"
+ },
+ "tuple_set": {
+  "script": "s03_16_tuple_set.py"
+ },
+ "orders": {
+  "script": "s03_17_orders.py"
+ },
+ "ex1": {
+  "script": "s03_ex1.py"
+ },
+ "ex2": {
+  "script": "s03_ex2.py"
+ },
+ "ex3": {
+  "script": "s03_ex3.py"
+ },
+ "ex4": {
+  "script": "s03_ex4.py"
+ },
+ "ex5": {
+  "script": "s03_ex5.py"
+ },
+ "ex6": {
+  "script": "s03_ex6.py"
+ }
+}

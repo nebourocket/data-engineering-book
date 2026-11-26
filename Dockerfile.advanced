@@ -1,0 +1,8 @@
+# 応用編のコード例 (examples/a01〜a12) を動かす image です。Dockerfile に Java (Spark 用) と requirements-advanced.txt を足しています。
+FROM python:3.12-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git bash jq fonts-noto-cjk default-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /w
+COPY requirements.txt requirements-advanced.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-advanced.txt

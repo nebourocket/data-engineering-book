@@ -1,0 +1,159 @@
+{
+ "func": {
+  "script": "s04_01_func.py"
+ },
+ "none": {
+  "script": "s04_02_none.py"
+ },
+ "args": {
+  "script": "s04_03_args.py"
+ },
+ "err_args": {
+  "script": "s04_err_args.py"
+ },
+ "names": {
+  "script": "s04_04_names.py"
+ },
+ "scope": {
+  "script": "s04_err_scope.py"
+ },
+ "write": {
+  "script": "s04_05_write.py"
+ },
+ "read": {
+  "script": "s04_06_read.py",
+  "files": [
+   "memo.txt"
+  ]
+ },
+ "append": {
+  "script": "s04_07_append.py",
+  "files": [
+   "memo.txt"
+  ]
+ },
+ "nofile": {
+  "script": "s04_err_nofile.py"
+ },
+ "csv_read": {
+  "script": "s04_08_csv_read.py",
+  "files": [
+   "orders.csv"
+  ]
+ },
+ "csv_total": {
+  "script": "s04_09_csv_total.py",
+  "files": [
+   "orders.csv"
+  ]
+ },
+ "csv_write": {
+  "script": "s04_10_csv_write.py"
+ },
+ "try": {
+  "script": "s04_11_try.py"
+ },
+ "try_file": {
+  "script": "s04_12_try_file.py"
+ },
+ "swallow": {
+  "script": "s04_13_swallow.py"
+ },
+ "report_skip": {
+  "script": "s04_14_report_skip.py"
+ },
+ "modules": {
+  "script": "s04_15_modules.py",
+  "files": [
+   "orders.csv"
+  ]
+ },
+ "nomodule": {
+  "script": "s04_err_nomodule.py"
+ },
+ "shoplib_main": {
+  "script": "s04_shoplib.py",
+  "noI": true
+ },
+ "use_lib": {
+  "script": "s04_16_use_lib.py",
+  "files": [
+   "s04_shoplib.py"
+  ],
+  "noI": true
+ },
+ "step1": {
+  "script": "s04_17_step1.py",
+  "files": [
+   "orders.csv"
+  ]
+ },
+ "step2": {
+  "script": "s04_18_step2.py",
+  "files": [
+   "orders.csv"
+  ]
+ },
+ "step3": {
+  "script": "s04_19_step3.py",
+  "files": [
+   "orders.csv"
+  ],
+  "as": "sales_report.py"
+ },
+ "step3_bad": {
+  "script": "s04_19_step3.py",
+  "files": [
+   "orders_bad.csv:orders.csv"
+  ],
+  "as": "sales_report.py"
+ },
+ "report": {
+  "script": "s04_sales_report.py",
+  "files": [
+   "orders.csv"
+  ]
+ },
+ "report_bad": {
+  "script": "s04_sales_report.py",
+  "files": [
+   "orders_bad.csv"
+  ],
+  "args": [
+   "orders_bad.csv"
+  ]
+ },
+ "report_missing": {
+  "script": "s04_sales_report.py",
+  "args": [
+   "nothing.csv"
+  ],
+  "as": "sales_report.py"
+ },
+ "ex1": {
+  "script": "s04_ex1.py",
+  "files": []
+ },
+ "ex2": {
+  "script": "s04_ex2.py",
+  "files": []
+ },
+ "ex3": {
+  "script": "s04_ex3.py",
+  "files": [
+   "orders.csv"
+  ]
+ },
+ "ex4": {
+  "script": "s04_ex4.py",
+  "files": []
+ },
+ "ex5": {
+  "script": "s04_ex5.py",
+  "files": []
+ },
+ "ex6": {
+  "script": "s04_ex6.py",
+  "files": []
+ }
+}

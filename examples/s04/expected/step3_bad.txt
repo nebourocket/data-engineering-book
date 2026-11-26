@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/home/taro/nebosuke/sales_report.py", line 33, in <module>
+    main()
+  File "/home/taro/nebosuke/sales_report.py", line 27, in main
+    sales = total_by_item(orders)
+            ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/taro/nebosuke/sales_report.py", line 12, in total_by_item
+    amount = int(order["price"]) * int(order["quantity"])
+             ^^^^^^^^^^^^^^^^^^^
+ValueError: invalid literal for int() with base 10: 'せんえん'

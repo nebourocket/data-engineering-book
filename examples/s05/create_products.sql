@@ -1,0 +1,18 @@
+CREATE TABLE products (
+    product_id INTEGER PRIMARY KEY,
+    name       VARCHAR,
+    category   VARCHAR,
+    price      INTEGER,
+    stock      INTEGER
+);
+
+INSERT INTO products VALUES
+    (1, '枕', '寝具', 3200, 12),
+    (2, '毛布', '寝具', 5800, 5),
+    (3, 'アイマスク', '寝具', 900, 40),
+    (4, '光る目覚まし', '目覚まし', 4500, 8),
+    (5, 'コーヒー豆(標準)', '飲み物', 1200, 30),
+    (6, 'コーヒー豆(大)', '飲み物', 2800, 15),
+    (7, '紅茶', '飲み物', 800, 0),
+    (8, 'マグカップ', '雑貨', 1500, 20),
+    (9, 'ステッカー', '雑貨', 300, 100);

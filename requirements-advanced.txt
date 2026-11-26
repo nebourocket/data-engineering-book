@@ -1,0 +1,7 @@
+# 応用編 (examples/a01〜a12) のコードを動かすための追加分です。requirements.txt と合わせて入れます。
+# pyspark には Java 17 以上が要ります (Dockerfile.advanced は default-jre-headless を入れます)。
+pyspark==4.3.0
+deltalake==1.6.6
+pyiceberg[sql-sqlite,pyarrow]==0.12.0
+jsonschema==4.23.0
+pandas==2.2.3

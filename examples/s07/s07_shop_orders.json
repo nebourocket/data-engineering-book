@@ -1,0 +1,40 @@
+{
+  "shop": "ねぼすけ商店",
+  "orders": [
+    {
+      "order_id": 1001,
+      "customer": {"name": "佐藤 太郎", "prefecture": "東京"},
+      "coupon": null,
+      "items": [
+        {"product": "アイマスク", "price": 1500, "quantity": 2},
+        {"product": "置き時計", "price": 2200, "quantity": 1}
+      ]
+    },
+    {
+      "order_id": 1002,
+      "customer": {"name": "鈴木 花子", "prefecture": "大阪"},
+      "coupon": "WELCOME",
+      "items": [
+        {"product": "コーヒー豆", "price": 1200, "quantity": 1}
+      ]
+    },
+    {
+      "order_id": 1003,
+      "customer": {"name": "佐藤 太郎", "prefecture": "東京"},
+      "coupon": null,
+      "items": [
+        {"product": "コーヒー豆", "price": 1200, "quantity": 3},
+        {"product": "マグカップ", "price": 900, "quantity": 1}
+      ]
+    },
+    {
+      "order_id": 1004,
+      "customer": {"name": "高橋 健", "prefecture": "東京"},
+      "coupon": null,
+      "items": [
+        {"product": "アイマスク", "price": 1500, "quantity": 1},
+        {"product": "マグカップ", "price": 900, "quantity": 2}
+      ]
+    }
+  ]
+}

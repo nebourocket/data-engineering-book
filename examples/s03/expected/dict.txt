@@ -1,0 +1,6 @@
+{'order_id': 1, 'item': 'アイマスク', 'price': 1500, 'quantity': 2}
+アイマスク
+3000
+{'order_id': 1, 'item': 'アイマスク', 'price': 1500, 'quantity': 3, 'status': 'shipped'}
+5
+True

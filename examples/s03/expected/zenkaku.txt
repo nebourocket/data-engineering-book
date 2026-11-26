@@ -1,0 +1,4 @@
+  File "/home/taro/nebosuke/s03_err_zenkaku.py", line 4
+    　　print("ありがとう")
+    ^
+SyntaxError: invalid non-printable character U+3000

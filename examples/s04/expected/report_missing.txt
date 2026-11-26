@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/home/taro/nebosuke/sales_report.py", line 41, in <module>
+    main()
+  File "/home/taro/nebosuke/sales_report.py", line 34, in main
+    orders = read_orders(path)
+             ^^^^^^^^^^^^^^^^^
+  File "/home/taro/nebosuke/sales_report.py", line 6, in read_orders
+    with open(path, encoding="utf-8", newline="") as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'nothing.csv'

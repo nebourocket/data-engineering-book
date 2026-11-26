@@ -1,0 +1,5 @@
+Host neboske-batch
+    HostName batch.example.com
+    User deploy
+    IdentityFile ~/.ssh/id_ed25519_neboske
+    IdentitiesOnly yes

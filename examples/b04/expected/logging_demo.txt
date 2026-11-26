@@ -1,0 +1,7 @@
+INFO neboske_etl.demo 読み込み 3000 行
+WARNING neboske_etl.demo 除外 4 行
+ERROR neboske_etl.demo 整数に直せない値がありました
+Traceback (most recent call last):
+  File "/w/examples/b04/logging_demo.py", line 12, in main
+    int("abc")
+ValueError: invalid literal for int() with base 10: 'abc'

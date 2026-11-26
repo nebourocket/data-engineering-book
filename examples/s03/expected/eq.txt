@@ -1,0 +1,4 @@
+  File "/home/taro/nebosuke/s03_err_eq.py", line 2
+    if price = 1200:
+       ^^^^^^^^^^^^
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?

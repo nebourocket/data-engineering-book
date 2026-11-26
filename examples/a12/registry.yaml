@@ -1,0 +1,24 @@
+# ねぼすけ商店が大きくなった想定のデータプロダクト台帳 (作り話)。わざと穴を入れてあります。
+teams:
+  order-app-team: {domain: sales, on_call: true}
+  sales-analytics: {domain: sales, on_call: true}
+  marketing-team: {domain: marketing, on_call: true}
+  logistics-team: {domain: logistics, on_call: false}
+  platform-team: {domain: platform, on_call: true}
+products:
+  raw.orders: {domain: sales, owner: order-app-team, contract: contracts/orders.yaml, freshness_minutes: 60, pii: false, upstream: []}
+  raw.order_items: {domain: sales, owner: order-app-team, contract: contracts/order_items.yaml, freshness_minutes: 60, pii: false, upstream: []}
+  raw.customers: {domain: sales, owner: order-app-team, contract: contracts/customers.yaml, freshness_minutes: 1440, pii: true, access_policy: mask-email, upstream: []}
+  mart.fact_sales: {domain: sales, owner: sales-analytics, contract: contracts/fact_sales.yaml, freshness_minutes: 120, pii: false, upstream: [raw.orders, raw.order_items]}
+  mart.daily_revenue: {domain: sales, owner: sales-analytics, contract: contracts/daily_revenue.yaml, freshness_minutes: 120, pii: false, upstream: [mart.fact_sales]}
+  mart.customer_ltv: {domain: sales, owner: sales-analytics, contract: contracts/customer_ltv.yaml, freshness_minutes: 1440, pii: false, upstream: [mart.fact_sales, ml.churn_features]}
+  tmp.sales_export: {domain: sales, owner: sales-analytics, contract: null, freshness_minutes: null, pii: false, upstream: [raw.orders]}
+  raw.events: {domain: marketing, owner: marketing-team, contract: contracts/events.yaml, freshness_minutes: 60, pii: false, upstream: []}
+  ml.churn_features: {domain: marketing, owner: marketing-team, contract: null, freshness_minutes: null, pii: false, upstream: [raw.orders, raw.events]}
+  mart.campaign_effect: {domain: marketing, owner: marketing-team, contract: contracts/campaign_effect.yaml, freshness_minutes: 1440, pii: false, upstream: [raw.events, mart.daily_revenue]}
+  raw.shipments: {domain: logistics, owner: logistics-team, contract: contracts/shipments.yaml, freshness_minutes: 60, pii: false, upstream: []}
+  mart.delivery_delay: {domain: logistics, owner: logistics-team, contract: contracts/delivery_delay.yaml, freshness_minutes: 120, pii: false, upstream: [raw.shipments, raw.orders]}
+  mart.shipping_cost: {domain: logistics, owner: logistic-team, contract: contracts/shipping_cost.yaml, freshness_minutes: 1440, pii: false, upstream: [raw.shipments]}
+  raw.address_book: {domain: logistics, owner: null, contract: contracts/address_book.yaml, freshness_minutes: null, pii: true, upstream: []}
+  platform.job_runs: {domain: platform, owner: platform-team, contract: contracts/job_runs.yaml, freshness_minutes: 60, pii: false, upstream: []}
+  mart.pipeline_health: {domain: platform, owner: platform-team, contract: contracts/pipeline_health.yaml, freshness_minutes: 120, pii: false, upstream: [platform.job_runs, raw.job_logs]}

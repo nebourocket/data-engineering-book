@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: 注文 1 件 1 行。状態の表記ゆれを小文字にそろえてある。
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [placed, shipped, delivered, cancelled]
+  - name: stg_order_items
+    columns:
+      - name: unit_price
+        data_tests: [is_positive]
+  - name: stg_events
+    description: 二重に届いたイベントを event_id で 1 件にしてある。
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]

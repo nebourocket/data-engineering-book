@@ -1,0 +1,4 @@
+  File "/home/taro/nebosuke/s03_err_noindent.py", line 3
+    print("送料無料")
+    ^^^^^
+IndentationError: expected an indented block after 'if' statement on line 2

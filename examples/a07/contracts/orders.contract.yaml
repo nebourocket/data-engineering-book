@@ -1,0 +1,13 @@
+name: orders
+version: 1.0.0
+owner: order-app-team
+description: 受注アプリが発行する注文イベント。1 注文 1 レコード。
+schema: orders.v1.json
+semantics:
+  total_amount: 明細の数量 x 単価の合計 (円、整数)。送料は含まない。
+  status: 小文字の 4 値のみ。表記ゆれは契約違反。
+sla:
+  freshness_minutes: 60
+  max_duplicate_rate: 0
+compatibility: backward
+deprecation_notice_days: 30

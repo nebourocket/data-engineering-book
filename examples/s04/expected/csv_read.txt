@@ -1,0 +1,7 @@
+{'order_id': '1', 'item': 'アイマスク', 'price': '1500', 'quantity': '2'}
+{'order_id': '2', 'item': 'マグカップ', 'price': '480', 'quantity': '4'}
+{'order_id': '3', 'item': 'コーヒー豆', 'price': '1200', 'quantity': '1'}
+{'order_id': '4', 'item': '枕', 'price': '4800', 'quantity': '1'}
+{'order_id': '5', 'item': 'アイマスク', 'price': '1500', 'quantity': '3'}
+{'order_id': '6', 'item': 'マグカップ', 'price': '480', 'quantity': '2'}
+{'order_id': '7', 'item': 'コーヒー豆', 'price': '1200', 'quantity': '3'}

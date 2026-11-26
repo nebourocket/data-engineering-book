@@ -10,7 +10,7 @@ Kindle 本『データエンジニアの本』シリーズ (著者: 寝坊ロケ
 
 フォルダの番号は、本の章の番号と同じです (`examples/b09` は基礎編 第9章)。どの章も、架空のネット通販「ねぼすけ商店」のデータ (`examples/common/neboske_shop.py`、`seed=42` で毎回同じデータ) を使います。
 
-## 動かし方 (Docker)
+## Run it yourself (動かし方)
 
 Docker があれば、パソコンに Python などを直接入れなくても動きます。
 
@@ -31,9 +31,23 @@ PostgreSQL・MinIO・Redpanda などを使う章 (基礎編 第7・9・14・15 �
 ```bash
 docker compose up -d --wait
 docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  -e PG_DSN=postgresql://deb:deb@localhost:5432/deb \
+  -e S3_ENDPOINT=http://localhost:9000 -e S3_ACCESS_KEY=minioadmin -e S3_SECRET_KEY=minioadmin \
+  -e KAFKA_BOOTSTRAP=localhost:19092 -e DE_BOOK_REQUIRE_SERVICES=1 \
   -v "$PWD":/w -w /w de-book-dev pytest
 docker compose down
 ```
+
+サービスにつなぐ先は、環境変数で渡します。
+
+| 環境変数 | 値 | つなぐ先 |
+| :--- | :--- | :--- |
+| `PG_DSN` | `postgresql://deb:deb@localhost:5432/deb` | PostgreSQL |
+| `S3_ENDPOINT` `S3_ACCESS_KEY` `S3_SECRET_KEY` | `http://localhost:9000` `minioadmin` `minioadmin` | MinIO (S3 互換のオブジェクトストレージ) |
+| `KAFKA_BOOTSTRAP` | `localhost:19092` | Redpanda (Kafka 互換) |
+| `DE_BOOK_REQUIRE_SERVICES` | `1` | サービスにつながらないテストを、飛ばさずに失敗にします |
+
+`compose.yaml` のパスワードは学習用の初期値です。ポートは `127.0.0.1` だけに開いています。MinIO は公式イメージの配布が止まったため、版を固定した `bitnamilegacy/minio` を使っています。手元の学習だけに使ってください。
 
 ## Advanced examples (応用編のコード)
 

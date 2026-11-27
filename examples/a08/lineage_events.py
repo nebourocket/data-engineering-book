@@ -91,7 +91,7 @@ def stale_tables(events):
 
 
 def schema_drift(events, name, contract_schema):
-    """イベントの schema ファセットと契約 (第 7 章の JSON Schema) の列を比べ、(契約に無い列, 契約の必須なのにイベントに無い列) を返す。"""
+    """イベントの schema ファセットと契約 (第7章の JSON Schema) の列を比べ、(契約に無い列, 契約の必須なのにイベントに無い列) を返す。"""
     for e in events:
         for o in e["outputs"]:
             if o["name"] == name and "facets" in o:
